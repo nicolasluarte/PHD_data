@@ -2,163 +2,129 @@
 pacman::p_load(
   tidyverse,
   stringi,
-  rprojroot
+  here
 )
 
+# disable scientific notation
+options(scipen = 999) 
+
+# this assumes that the repo is on the home folder
+setwd('~/PHD_data')
+
 # load metadata
-here::here()
-metadata <- read_csv("~/PHD_data/objective_2_metadata_pilot.csv") %>% 
-  mutate_all(as.character) %>% 
+metadata_dir <- './objective_2/data/meta/objective_2_metadata_pilot.csv'
+metadata <- read_csv(metadata_dir) %>% 
+  # imported all as character to avoid data compatibility issues
+  mutate_all(as.character)
+
+# set columns data types
+metadata <- metadata %>% 
   mutate(
     start = hms::as_hms(start),
     end = hms::as_hms(end),
-    date = lubridate::ymd(date)
+    date = lubridate::ymd(date),
+    random_spout = case_when(
+      random_spout == "0" ~ "LEFT",
+      random_spout == "2" ~ "RIGHT",
+      TRUE ~ "NO_RANDOM"
+    ),
+    complete_data = as.logical(as.numeric(complete_data)),
+    n_sesion = as.numeric(n_sesion),
+    ID = as.factor(ID),
+    lickometer_number = as.factor(lickometer_number),
+    com = as.factor(com),
+    arduino = as.factor(arduino),
+    pc = as.factor(pc),
+    across(init_licks_0:end_events_2, ~as.numeric(.x))
   )
 
 # load data
+data_dir <- 'objective_2/data/raw/objective_2_pool_1.csv'
+data <- read_csv(data_dir)
 
-# list all lickometer csv files
-list_of_files <- list.files(
-  path = "~/PHD_data",
-  recursive = TRUE,
-  pattern = "\\.csv$",
-  full.names = TRUE
-) %>% 
-  as_tibble() %>% 
-  filter(grepl('experimental_log', value)) %>% 
-  pull(value)
-
-# import
-df_raw <- list_of_files %>% 
-  map_df(., function(file){
-    r <- read_csv(file, id = "file_name") %>% 
-      mutate_all(as.character)
-  })
-
-df <- df_raw %>% 
-  rename(arduino = arduinoNumber) %>% 
+# set column data types
+data <- data %>% 
   mutate(
-    pc = str_extract(file_name, "data_pc_[0-9]"),
-    pc = stri_sub(pc,-1),
-    pcTime = as.numeric(pcTime),
-    time = hms::as_hms(strptime(pcTime, format = "%H%M%S")),
-    date = lubridate::ymd(date)
-  )
+    date = lubridate::ymd(date),
+    pcTime = hms::as_hms(strptime(as.numeric(pcTime), format = "%H%M%S")),
+    msFromStart = as.numeric(msFromStart),
+    arduino = as.factor(arduino),
+    spoutNumber = case_when(
+      spoutNumber == "0" ~ "LEFT",
+      spoutNumber == "2" ~ "RIGHT",
+      TRUE ~ "ERROR"
+    ), 
+    licksCum = as.numeric(licksCum),
+    eventsCum = as.numeric(eventsCum),
+    rewardsCum = as.numeric(rewardsCum),
+    # TRUE in random spout means that this spout was with a prob of 0.5
+    randomSpout = as.logical(randomSpout),
+    pc = as.factor(pc)
+  ) %>% 
+  select(-file_name)
 
-# add metadata
-df_meta <- df %>%
+# join data with metadata
+df <- data %>% 
   left_join(
-    metadata %>% select(-random_spout),
+    metadata,
     by = c("pc", "date", "arduino")
   ) %>% 
   # only get data within session and only files without errors
   filter(
-    time >= start, 
-    time <= end,
-    complete_data == 1
-  ) %>% 
-  mutate(
-    n_sesion = as.numeric(n_sesion)
+    pcTime >= start,
+    pcTime <= end,
+    complete_data == TRUE
   )
 
 # add experimental groups and phases
-df_meta <- df_meta %>% 
+df <- df %>% 
   mutate(
     exp_phase = if_else(n_sesion <= 12, "BASAL", "EXPERIMENTAL"),
     exp_group = case_when(
       ID %in% c(217, 219, 223, 224) ~ "UNC",
       TRUE ~ "CONTROL"
-    ),
-    spoutType = if_else(randomSpout == 1, "UNC", "CER"),
-    spoutNumber = as.numeric(spoutNumber)
-    ) %>% 
-  select(-...2)
+    )
+  )
 
-# fix all column variables
-# add reward and non rewarded
+# rename position of random spout and random spout bool
+df <- df %>% 
+  rename(
+    is_random = randomSpout,
+    random_spout_pos = random_spout
+  )
 
-# plots
-
-# plot 1: baseline licks and events per spout
-
-df_plot <- df_meta %>% 
+# add column to detect if current event was rewarded or not
+df <- df %>% 
   group_by(
     ID,
-    date,
-    spoutType
+    n_sesion,
+    spoutNumber
   ) %>% 
   mutate(
-    licksCum = as.numeric(licksCum) - as.numeric(licksCum)[1],
-    eventsCum = as.numeric(eventsCum) - as.numeric(eventsCum)[1]
+    is_reward = if_else(eventsCum - lag(eventsCum) == 1 & rewardsCum - lag(rewardsCum) == 1, "REWARDED", "NOT_REWARDED")
   ) %>% 
   ungroup()
 
-df_plot <- df_plot %>% 
+# correct baseline licks and events
+df <- df %>% 
   group_by(
     ID,
-    date,
-    spoutType,
-    exp_phase,
-    exp_group,
-    n_sesion
-  ) %>% 
-  summarise(
-    licksMax = max(licksCum),
-    eventsMax = max(eventsCum)
-  ) %>% 
-  ungroup() %>% 
-  group_by(
     n_sesion,
-    exp_phase,
-    exp_group,
-    spoutType
+    spoutNumber
   ) %>% 
-  summarise(
-    licksMean = mean(licksMax),
-    eventsMean = mean(eventsMax),
-    licksE = sd(licksMax) / sqrt(n()),
-    eventsE = sd(eventsMax) / sqrt(n())
+  mutate(
+    licks_corr = licksCum - licksCum[1],
+    events_corr = eventsCum - eventsCum[1],
+    rewards_corr = rewardsCum - rewardsCum[1]
+  )
+
+# msFromStart for each ID
+df <- df %>% 
+  group_by(ID, n_sesion) %>% 
+  mutate(
+    msFromStart_corr = msFromStart - msFromStart[1]
   ) %>% 
   ungroup()
 
-#licks
-df_plot %>% 
-  ggplot(aes(
-    n_sesion,
-    licksMean,
-    color = exp_group,
-    group = exp_group
-  )) +
-  geom_line() +
-  geom_point() +
-  geom_errorbar(aes(ymin = licksMean - licksE, ymax = licksMean + licksE)) +
-  facet_wrap(exp_phase~spoutType~exp_group, scales = "free_x")
-#licks by time
-df_plot %>% 
-  filter(exp_phase == "EXPERIMENTAL", exp_group == "UNC") %>% 
-  ggplot(aes(
-    n_sesion,
-    licksMean,
-    color = spoutType,
-    group = spoutType
-  )) +
-  geom_line() +
-  geom_point() +
-  geom_errorbar(aes(ymin = licksMean - licksE, ymax = licksMean + licksE))
-
-#events
-df_plot %>% 
-  filter(exp_phase == "EXPERIMENTAL", exp_group == "UNC") %>% 
-  ggplot(aes(
-    n_sesion,
-    eventsMean,
-    color = spoutType,
-    group = spoutType
-  )) +
-  geom_line() +
-  geom_point() +
-  geom_errorbar(aes(ymin = eventsMean - eventsE, ymax = eventsMean + eventsE))
-
-# correct by baseline licks
-
-
+# save final data
+write_rds(df, "./objective_2/data/objective_2_pool_1.RDS")
