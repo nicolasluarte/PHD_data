@@ -1,0 +1,145 @@
+---
+title: "thesis_data_analysis"
+author: "Luis Luarte"
+date: '2022-08-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load libs
+
+```{r}
+pacman::p_load(
+  tidyverse,
+  ggplot2,
+  rstudioapi,
+  devtools,
+  lme4,
+  lmerTest,
+  googledrive,
+  ggpubr,
+  cowplot
+)
+
+# source lickometer library
+devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/src/lickometer_functions_compilate.R?raw=TRUE")
+
+```
+
+# load data sets
+
+This data sets correspond to experiments where FED food delivery was random, and
+motivation was tested using a progressive ratio in lickometer
+
+```{r}
+# set working directory where this file is located
+cur_dir <- dirname(getSourceEditorContext()$path)
+setwd(cur_dir)
+
+# load experiment
+data_raw <- load_experiment(
+  '../data/meta/lickometer_metadata.csv',
+  '../data/raw/pool_2/FR/'
+)
+```
+# plots
+```{r}
+ind <- data_raw %>% 
+  mutate(
+    sensor = if_else(sensor == 0, "Left", "Right") 
+  ) %>% 
+    group_by(
+      ID,
+      n_sesion,
+      sensor
+    ) %>% 
+    summarise(
+      licks = n(),
+      events = max(evento)
+    ) %>% 
+    ungroup()
+
+ind_pref <- ind %>% 
+  pivot_wider(
+    names_from = sensor,
+    values_from = c("licks", "events")
+  ) %>% 
+  mutate(
+    licks_ratio = licks_Left / licks_Right,
+    events_ratio = events_Left / events_Right
+  )
+  
+gr <- ind %>% 
+    group_by(
+      n_sesion,
+      sensor
+    ) %>% 
+    summarise(
+      err_licks = sd(licks) / sqrt(n()),
+      err_events = sd(events) / sqrt(n()),
+      licks = mean(licks),
+      events = mean(events)
+    )
+  
+p1 <- gr %>% 
+    ggplot(aes(
+      n_sesion,
+      licks,
+      color = as.factor(sensor),
+      group = as.factor(sensor)
+    )) +
+    geom_line() +
+    geom_point() +
+    geom_errorbar(
+      aes(
+      ymin = licks - err_licks,
+      ymax = licks + err_licks
+      ),
+      width = 0.3
+    ) +
+    geom_line(data = ind, aes(group = interaction(ID, sensor)), alpha = 0.3) +
+    geom_point(data = ind, aes(group = interaction(ID, sensor)), alpha = 0.3)
+p2 <- gr %>% 
+    ggplot(aes(
+      n_sesion,
+      events,
+      color = as.factor(sensor),
+      group = as.factor(sensor)
+    )) +
+    geom_line() +
+    geom_point() +
+    geom_errorbar(
+      aes(
+      ymin = events - err_events,
+      ymax = events + err_events
+      ),
+      width = 0.3
+    ) +
+    geom_line(data = ind, aes(group = interaction(ID, sensor)), alpha = 0.3) +
+   geom_point(data = ind, aes(group = interaction(ID, sensor)), alpha = 0.3)
+p3 <- ind_pref %>% 
+  ggplot(aes(
+    n_sesion,
+    licks_ratio,
+    color = ID,
+    group = ID
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0.5)
+  
+p1 <- p1 +
+  ggtitle("Licks") +
+  theme_pubr()
+p2 <- p2 +
+  ggtitle("Events") +
+  theme_pubr()
+p3 <- p3 +
+  ggtitle("Spout preference") +
+  theme_pubr()
+plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12)
+```
+
