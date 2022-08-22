@@ -1,0 +1,1068 @@
+---
+title: "thesis_data_analysis"
+author: "Luis Luarte"
+date: '2022-06-03'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load libs
+
+```{r}
+pacman::p_load(
+  tidyverse,
+  ggplot2,
+  rstudioapi,
+  devtools,
+  lme4,
+  lmerTest,
+  ggpubr,
+  ggthemes,
+  sjPlot
+)
+
+# source lickometer library
+devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/src/lickometer_functions_compilate.R?raw=TRUE")
+
+```
+
+# load data sets
+
+This data sets correspond to experiments where FED food delivery was random, and
+motivation was tested using a progressive ratio in lickometer
+
+```{r}
+# set working directory where this file is located
+cur_dir <- dirname(getSourceEditorContext()$path)
+setwd(cur_dir)
+
+# lickometer data for both pool with low and high uncertainty
+lickometer_uncertainty <- readRDS("../data/raw/lickometer_data.rds")
+
+# fed data for both pool with low and high uncertainty
+fed_high_uncertainty <- readRDS("../data/raw/high_uncertainty.rds")
+fed_low_uncertainty <- readRDS("../data/raw/low_uncertainty.rds")
+
+# merge both fed data sets
+fed_uncertainty <- bind_rows(
+  fed_high_uncertainty,
+  fed_low_uncertainty
+)
+
+# weight data
+weight_uncertainty <- readRDS("../data/raw/weights.rds")
+```
+
+# data processing
+
+## intake
+
+```{r}
+# this data proc is to plot intake
+
+# first get intake over days per mouse
+intake_over_days <- fed_uncertainty %>% 
+  # add light/dark periods
+  mutate(
+    light_dark = case_when(
+      hour_of_day >= 11 & hour_of_day <= 23 ~ "dark",
+      TRUE ~ "light"
+    )
+  ) %>% 
+  group_by(
+    animal,
+    ymd,
+    experiment_id,
+    protocol
+  ) %>% 
+  summarise(
+    pellets_per_day = max(pellets)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    animal
+  ) %>% 
+  mutate(
+    pellets_cumm = cumsum(pellets_per_day)
+  ) %>% 
+  filter(
+    protocol %in% c("experimental", "control")
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    animal
+  ) %>% 
+  mutate(
+    session = as.numeric(as.factor(ymd))
+  ) %>% 
+  # max number of sessions for all pools
+  # 246 was euthanized
+  filter(session <= 35, animal != 246) %>% 
+  # group both controls together
+  mutate(
+    group = case_when(
+      protocol == "control" ~ "control",
+      protocol == "experimental" &
+        experiment_id == "high_uncertainty_fed" ~ "experimental_high_unc",
+      protocol == "experimental" &
+        experiment_id == "low_uncertainty_fed" ~ "experimental_low_unc"
+    )
+  )
+
+# intake model
+intake_mdl <- lmer(
+  data = intake_over_days %>% filter(session > 7),
+  pellets_per_day ~ group * session + (1 | animal)
+)
+summary(intake_mdl)
+confint(intake_mdl)
+
+# cummulative intake over days summarized to present data based on
+# experimental protocol
+intake_over_days_group <- intake_over_days %>% 
+  group_by(
+    group,
+    session
+  ) %>% 
+  summarise(
+    pellets_cumm_group = mean(pellets_cumm),
+    err = sd(pellets_cumm) / sqrt(n())
+  )
+
+# mean intake per group
+intake_means <- intake_over_days %>% 
+  group_by(
+    group,
+    session,
+    animal
+  ) %>% 
+  summarise(
+    pellets_mean = mean(pellets_per_day)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    group,
+    session
+  ) %>% 
+  summarise(
+    pellets_mean_session = mean(pellets_mean)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    group
+  ) %>% 
+  summarise(
+    pellets_mean_group = mean(pellets_mean_session),
+    err = sd(pellets_mean_session) / sqrt(n())
+  )
+
+# intake with light dark periods
+intake_over_days_circ <- fed_uncertainty %>% 
+  # add light/dark periods
+  mutate(
+    light_dark = case_when(
+      hour_of_day >= 11 & hour_of_day <= 23 ~ "dark",
+      TRUE ~ "light"
+    )
+  ) %>% 
+  group_by(
+    animal,
+    ymd,
+    experiment_id,
+    protocol,
+    light_dark
+  ) %>% 
+  summarise(
+    pellets_per_day = max(pellets)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    animal
+  ) %>% 
+  mutate(
+    pellets_cumm = cumsum(pellets_per_day)
+  ) %>% 
+  filter(
+    protocol %in% c("experimental", "control")
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    animal
+  ) %>% 
+  mutate(
+    session = as.numeric(as.factor(ymd))
+  ) %>% 
+  # max number of sessions for all pools
+  # 246 was euthanize
+  filter(session <= 35, animal != 246) %>% 
+  # group both controls together
+  mutate(
+    group = case_when(
+      protocol == "control" ~ "control",
+      protocol == "experimental" &
+        experiment_id == "high_uncertainty_fed" ~ "experimental_high_unc",
+      protocol == "experimental" &
+        experiment_id == "low_uncertainty_fed" ~ "experimental_low_unc"
+    )
+  )
+
+# inter-pellet recovery time
+inter_pellet_recovery <- fed_uncertainty %>% 
+  mutate(
+    session = as.numeric(as.factor(ymd))
+  ) %>% 
+  group_by(animal) %>% 
+  mutate(
+    inter_pellet_recovery = (hms - lag(hms)) - delay
+  ) %>% 
+  # na here are the first pellet which is set while leaving the FED inside the cage
+  drop_na() %>% 
+  ungroup() %>% 
+  # remove double pellets > 3% chance
+  # double pellets generate events that are faster than delay
+  filter(
+    inter_pellet_recovery > 0
+  )
+
+# now we want inter-pellet recovery estimate by animal and session
+inter_pellet_recovery_ind <- inter_pellet_recovery %>% 
+  group_by(
+    animal,
+    session,
+    protocol,
+    experiment_id
+  ) %>% 
+  summarise(
+    mean_recovery = mean(inter_pellet_recovery)
+  ) %>% 
+  # now session is collapsed to obtain an estimate per animal
+  ungroup() %>% 
+  group_by(
+    animal,
+    protocol,
+    experiment_id
+  ) %>% 
+  summarise(
+    mean_recovery_id = mean(mean_recovery)
+  )
+# inter-pellets recovery by group
+inter_pellet_recovery_group <- inter_pellet_recovery_ind %>% 
+  ungroup() %>% 
+  group_by(
+    protocol,
+    experiment_id
+  ) %>% 
+  summarise(
+    mean_recovery_group = mean(mean_recovery_id),
+    err = sd(mean_recovery_id) / sqrt(n())
+  )
+  
+```
+
+## weight 
+```{r}
+weight_uncertainty <- readRDS("../data/raw/weights.rds")
+# create control and experimental groups
+weight_uncertainty <- weight_uncertainty %>% 
+  mutate(
+    group = case_when(
+      animal %in% c(320, 323, 325, 326) ~ "experimental_high_unc",
+      animal %in% c(234, 235, 236, 245, 265) ~ "experimental_low_unc",
+      TRUE ~ "control"
+    )
+  )
+
+# add groups
+# first we get them from fed_uncerainty data
+groups <- fed_uncertainty %>% 
+  select(
+    animal,
+    protocol,
+    ymd
+  ) %>% 
+  distinct(., ymd, .keep_all = TRUE)
+# add the group into weight data
+weight_uncertainty <- weight_uncertainty %>% 
+  left_join(groups, by = c("animal", "date" = "ymd")) %>% 
+  filter(protocol %in% c("experimental", "control"))
+
+weight_change <- weight_uncertainty %>% 
+  group_by(
+    animal
+  ) %>% 
+  mutate(
+    dw = ((weight - weight[1]) / weight[1]) * 100
+  ) %>% 
+  do(tail(., n=3))
+
+w_mdl <- lm(
+  data = weight_change,
+  dw ~ group
+)
+summary(w_mdl)
+
+# calculate percent difference between days
+weight_uncertainty <- weight_uncertainty %>% 
+  group_by(
+    animal,
+    experiment_id
+  ) %>% 
+  mutate(
+    init_weight = weight[1],
+    delta_bw = ((weight - init_weight) / ((weight + init_weight) / 2)) * 100,
+    cumm_delta_bw = cumsum(delta_bw),
+    session = as.numeric(as.factor(date))
+  ) %>% 
+  # right number of weight sessions
+  filter(session <= 16)
+
+# get means per group per session
+weight_uncertainty_group <- weight_uncertainty %>% 
+  group_by(
+    session,
+    group
+  ) %>% 
+  summarise(
+    weight_mean = mean(delta_bw),
+    err = sd(weight) / sqrt(n())
+  )
+
+# get mean per group
+weight_uncertainty_group_ <- weight_uncertainty_group %>% 
+  group_by(
+    group
+  ) %>% 
+  summarise(
+    weight_mean_ = mean(weight_mean),
+    err_ = sd(weight_mean) / sqrt(n())
+  )
+
+# get number of pellets / delta bw
+# merge intake over days with weight data
+intake_weight <- intake_over_days %>% 
+  left_join(weight_uncertainty %>% 
+              select(animal, weight, date), by = c("animal", "ymd" = "date"))
+# impute missing data with a rolling average
+intake_weight_imputation <- intake_weight %>% 
+  group_by(
+    animal
+  ) %>% 
+  mutate(
+    rolling_weight = zoo::rollapply(weight, 5, mean, fill = 0, na.rm = TRUE)
+  ) %>% 
+  ungroup() %>% 
+  filter(rolling_weight != 0) %>% 
+  group_by(
+    animal,
+    session
+  ) %>% 
+  mutate(
+    pellets_per_gr = pellets_per_day / rolling_weight
+  ) 
+# calculate means per session
+intake_weight_session <- intake_weight_imputation %>% 
+  group_by(
+    session,
+    group
+  ) %>% 
+  summarise(
+    pellets_per_gr_mean = mean(pellets_per_gr),
+    err = sd(pellets_per_gr) / sqrt(n())
+  )
+# calculate means per group
+intake_weight_group <- intake_weight_session %>% 
+  group_by(
+    group
+  ) %>% 
+  summarise(
+    pellets_per_gr_mean_group = mean(pellets_per_gr_mean),
+    err = sd(pellets_per_gr_mean) / sqrt(n())
+  )
+
+# same idea but with light dark periods
+# get number of pellets / delta bw
+# merge intake over days with weight data
+intake_weight_circ <- intake_over_days_circ %>% 
+  left_join(weight_uncertainty %>% 
+              select(animal, weight, date), by = c("animal", "ymd" = "date"))
+# impute missing data with a rolling average, add from the previously calculated
+intake_weight_imputation_circ <- intake_weight_circ %>% 
+  select(-session) %>% 
+  left_join(intake_weight_imputation %>% 
+              select(
+                animal,
+                ymd,
+                rolling_weight
+              ), by = c("animal", "ymd")) %>% 
+  ungroup() %>% 
+  filter(rolling_weight != 0) %>% 
+  group_by(
+    animal,
+    session,
+    light_dark
+  ) %>% 
+  mutate(
+    pellets_per_gr = pellets_per_day / rolling_weight
+  ) 
+
+# calculate means per session
+intake_weight_session_circ <- intake_weight_imputation_circ %>% 
+  group_by(
+    session,
+    group,
+    light_dark
+  ) %>% 
+  summarise(
+    pellets_per_gr_mean = mean(pellets_per_gr),
+    err = sd(pellets_per_gr) / sqrt(n())
+  )
+# calculate means per group
+intake_weight_group_circ <- intake_weight_session_circ %>% 
+  group_by(
+    group,
+    light_dark
+  ) %>% 
+  summarise(
+    pellets_per_gr_mean_group = mean(pellets_per_gr_mean),
+    err = sd(pellets_per_gr_mean) / sqrt(n())
+  )
+```
+## lickometer
+
+### preference
+```{r}
+# add relevant labels: experimental group and protocol
+
+labels <- weight_uncertainty %>% 
+  select(animal, group, protocol, experiment_id) %>% 
+  distinct(., animal, .keep_all = TRUE) %>% 
+  rename(ID = animal)
+
+
+lickometer_data <- lickometer_uncertainty %>% 
+  left_join(
+    labels,
+    by = c("ID")
+  ) %>% 
+  # add session instead of dates
+  group_by(
+    group,
+    task_type
+  ) %>% 
+  mutate(
+    session = as.numeric(as.factor(fecha))
+  ) %>% 
+  ungroup()
+
+# preference for sucrose
+spout_pref <- lickometer_data %>% 
+  group_by(
+    ID,
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    task_type,
+    fecha,
+    experiment_id
+  ) %>% 
+  summarise(
+    n_licks = n(),
+    n_events = max(evento)
+  )
+
+# preference for sucrose in FR
+spout_pref_fr <- spout_pref %>% 
+  filter(task_type == "fr") %>% 
+  group_by(
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    fecha
+  ) %>% 
+  summarise(
+    mean_licks = mean(n_licks)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    group,
+    protocol,
+    fecha
+  ) %>% 
+  mutate(
+    total_licks = sum(mean_licks),
+    relative_licks = (mean_licks / total_licks) * 100
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    group,
+    protocol,
+    tipo_recompensa
+  ) %>% 
+  summarise(
+    mean_licks_group = mean(relative_licks), 
+    err = sd(relative_licks) / sqrt(n())
+  )
+```
+
+### PR structure
+```{r}
+
+pr_data <- lickometer_data %>% 
+  group_by(
+    ID,
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    task_type,
+    fecha,
+    experiment_id
+  ) %>% 
+  summarise(
+    n_licks = n(),
+    n_events = max(evento)
+  )
+
+pr_sessions <- pr_data %>% 
+  filter(task_type == "pr") %>% 
+  group_by(
+    group,
+    protocol,
+    experiment_id
+  ) %>% 
+  mutate(
+    session = as.numeric(as.factor(fecha)),
+    valid_session = if_else(protocol == "control" & session > 7, 0, 1)
+  ) %>% 
+  # consider only sucrose licks and events
+  filter(valid_session == 1, tipo_recompensa == "sacarosa") %>% 
+  select(-valid_session) %>% 
+  # re compute standarized mean after merging both controls group together
+  mutate(
+    experiment_id = if_else(protocol == "control", "control", experiment_id)
+  ) %>% 
+  # z-score licks and events
+  group_by(
+    ID
+  ) %>% 
+  mutate(
+    n_licks_z = scale(n_licks),
+    n_events_z = scale(n_events)
+  ) %>% 
+  ungroup() %>% 
+  # obtain group estimates
+  group_by(
+    protocol,
+    group,
+    experiment_id,
+    session
+  ) %>% 
+  summarise(
+    mean_licks = mean(n_licks),
+    mean_events = mean(n_events),
+    err_licks = sd(n_licks) / sqrt(n()),
+    err_events = sd(n_events) / sqrt(n())
+  )
+
+pr_sessions_mdl <- pr_data %>% 
+  filter(task_type == "pr") %>% 
+  group_by(
+    group,
+    protocol,
+    experiment_id
+  ) %>% 
+  mutate(
+    session = as.numeric(as.factor(fecha)),
+    valid_session = if_else(protocol == "control" & session > 7, 0, 1)
+  ) %>% 
+  # consider only sucrose licks and events
+  filter(valid_session == 1, tipo_recompensa == "sacarosa") %>% 
+  select(-valid_session) %>% 
+  # re compute standarized mean after merging both controls group together
+  mutate(
+    experiment_id = if_else(protocol == "control", "control", experiment_id)
+  ) %>% 
+  # z-score licks and events
+  group_by(
+    ID
+  ) %>% 
+  mutate(
+    n_licks_z = scale(n_licks),
+    n_events_z = scale(n_events)
+  ) %>% 
+  ungroup()
+```
+## lickometer plots and stats
+
+### licks over session stats
+```{r}
+licks_model <- lmer(
+  data = pr_sessions_mdl,
+  n_licks ~ group * session + (1 | ID)
+)
+summary(licks_model)
+confint(licks_model)
+
+licks_model_fct <- lmer(
+  data = pr_sessions_mdl,
+  n_licks ~ group * as.factor(session) + (1 | ID)
+)
+summary(licks_model_fct)
+emmeans::emmeans(licks_model_fct, pairwise~group|session) %>% 
+  summary(adjust = "none")
+```
+
+### microstructure
+```{r}
+pr_micro <- lickometer_data %>% 
+  filter(task_type == "pr")
+
+pr_micro <- pr_micro %>% 
+  group_by(
+    ID,
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    task_type,
+    fecha,
+    experiment_id
+  ) %>% 
+  mutate(interval = tiempo - lag(tiempo, default = NA))
+
+ili <- burst_analysis(pr_micro, 500)
+
+# number of clusters
+clusters <- ili %>% 
+  ungroup() %>% 
+  filter(values == "in_cluster") %>% 
+  group_by(
+    ID,
+    group,
+    tipo_recompensa,
+    n_sesion
+  ) %>% 
+  summarise(
+    n_cluster = n()
+  ) %>% 
+  mutate(n_sesion = as.numeric(n_sesion)) %>% 
+  filter(tipo_recompensa == "sacarosa")
+
+clusters_m <- clusters %>% 
+  group_by(
+    group,
+    n_sesion
+  ) %>% 
+  summarise(
+    m = mean(n_cluster),
+    s = sd(n_cluster) / sqrt(n())
+  )
+
+clusters_m %>% 
+  ggplot(aes(
+    n_sesion,
+    m,
+    ymin = m - s,
+    ymax = m + s,
+    fill = group
+  )) +
+  geom_col(position = "dodge") +
+  geom_errorbar(width = 0.3, position = position_dodge(0.9)) +
+  scale_fill_discrete(labels=c('Control', 'High uncertainty', 'Low uncertainty')) +
+  theme_pubr() +
+  ylab("Mean number of clusters") +
+  xlab("Session number") +
+  labs(fill='') +
+  theme(legend.position = "right") +
+  scale_x_continuous(breaks = 1:7)
+ggsave("../images/figure4.png", width = 6, height = 4)
+
+
+cluster_mdl <- lmer(
+  data = clusters,
+  n_cluster ~ group * n_sesion + (1 | ID)
+)
+summary(cluster_mdl)
+confint(cluster_mdl)
+
+cluster_mdl_fct <- lmer(
+  data = clusters,
+  n_cluster ~ group * as.factor(n_sesion) + (1 | ID)
+)
+emmeans::emmeans(cluster_mdl_fct, pairwise~group|n_sesion) %>% 
+  summary(adjust = "tukey")
+
+pm <- plot_model(cluster_mdl,show.p = TRUE, show.values = TRUE, p.shape = TRUE, rm.terms = c("groupexperimental_high_unc", "groupexperimental_low_unc", "n_sesion")) +
+  ggtitle("") +
+  theme(legend.position = "right") +
+  ylab("Number of clusters") +
+  xlab("Coefficients") +
+  theme_pubr()
+levels(pm$data$term) <- c("Low uncertainty : sessions", "High uncertainty : sessions")
+pm
+ggsave("../images/figure3.png", width = 6, height = 4)
+```
+
+
+### licks over sessions
+```{r}
+pr_sessions$group <- factor(pr_sessions$group, levels = c('control', 'experimental_low_unc', 'experimental_high_unc'))
+pr_sessions %>% 
+  ggplot(aes(
+    session,
+    mean_licks,
+    fill = group
+  )) +
+  geom_col(position = "dodge") +
+  geom_errorbar(aes(
+    ymin = mean_licks - err_licks,
+    ymax = mean_licks + err_licks
+  ), width = 0.3, position = position_dodge(0.9)) +
+  scale_fill_discrete(labels=c('Control', 'Low uncertainty', 'High uncertainty')) +
+  theme_pubr() +
+  ylab("Mean number of licks") +
+  xlab("Session number") +
+  labs(fill='') +
+  theme(legend.position = "right") +
+  scale_x_continuous(breaks = 1:7)
+ggsave("../images/figure1.pdf", width = 6, height = 4)
+
+plot_model(licks_model, type = "pred", terms = c("session", "group")) +
+  ggtitle("") +
+  theme_pubr() +
+  theme(legend.position = "right") +
+  scale_color_discrete(breaks = c('control', 'experimental_low_unc', 'experimental_high_unc'),
+                       labels=c('Control', 'Low uncertainty', 'High uncertainty')) +
+  labs(color = '') +
+  ylab("Number of licks estimates") +
+  xlab("Session number")
+ggsave("../images/figure2.png", width = 6, height = 4)
+```
+
+
+
+
+
+# plots
+
+## intake
+
+### cummulative intake over days
+```{r}
+# cummulative intake over days
+intake_over_days_group %>% 
+  ggplot(aes(
+    session,
+    pellets_cumm_group,
+    color = group,
+    ymin = pellets_cumm_group - err,
+    ymax = pellets_cumm_group + err
+  )) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.3)
+```
+### mean intake per group
+```{r}
+intake_means %>% 
+  ggplot(aes(
+    group,
+    pellets_mean_group,
+    ymin = pellets_mean_group - err,
+    ymax = pellets_mean_group + err,
+    fill = group
+  )) +
+  geom_col() +
+  geom_errorbar(width = 0.3) +
+  theme_pubr() +
+  ylab("Mean daily pellet intake") +
+  xlab("") +
+  labs(fill='') +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels=c("Control","High uncertainty", "Low uncertainty"))
+ggsave("../images/figure5.png", width = 6, height = 4)
+```
+### pellet intake per bw per session
+```{r}
+intake_weight_session %>% 
+  ggplot(aes(
+    session,
+    pellets_per_gr_mean,
+    color = group,
+    ymin = pellets_per_gr_mean - err,
+    ymax = pellets_per_gr_mean + err
+  )) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.3)
+```
+### pellet intake per bw per group
+```{r}
+intake_weight_group %>% 
+  ggplot(aes(
+    group,
+    pellets_per_gr_mean_group,
+    ymin = pellets_per_gr_mean_group - err,
+    ymax = pellets_per_gr_mean_group + err
+  )) +
+  geom_col() +
+  geom_errorbar(width = 0.3)
+```
+### pellet intake per bw per group light/dark
+```{r}
+intake_weight_group_circ %>% 
+  ggplot(aes(
+    group,
+    pellets_per_gr_mean_group,
+    ymin = pellets_per_gr_mean_group - err,
+    ymax = pellets_per_gr_mean_group + err,
+    fill = light_dark
+  )) +
+  geom_col(position = "dodge") +
+  geom_errorbar(width = 0.3, position = position_dodge(width = 0.9))
+```
+
+## weight
+
+### delta body weight per session
+```{r}
+weight_uncertainty_group %>% 
+  ggplot(aes(
+    session,
+    weight_mean,
+    ymin = weight_mean - err,
+    ymax = weight_mean + err,
+    color = group
+  )) +
+  geom_point() +
+  geom_line() + 
+  geom_errorbar()
+```
+### delta body weight per group
+```{r}
+weight_uncertainty_group_ %>% 
+  ggplot(aes(
+    group,
+    weight_mean_,
+    ymin = weight_mean_ - err_,
+    ymax = weight_mean_ + err_
+  )) +
+  geom_col() +
+  geom_errorbar(width = 0.3)
+```
+## inter pellet recovery time
+```{r}
+inter_pellet_recovery_ind %>% 
+  ggplot(aes(
+    experiment_id,
+    mean_recovery_id,
+    group = protocol
+  )) +
+  geom_col(
+    inherit.aes = FALSE,
+    aes(
+      experiment_id,
+      mean_recovery_group,
+      fill = protocol
+    ),
+    data = inter_pellet_recovery_group,
+    position = "dodge"
+  ) +
+  geom_errorbar(
+    inherit.aes = FALSE,
+    aes(
+      experiment_id,
+      mean_recovery_group,
+      fill = protocol,
+      ymin = mean_recovery_group - err,
+      ymax = mean_recovery_group + err
+    ),
+    data = inter_pellet_recovery_group,
+    position = position_dodge(0.9),
+    width = 0.3
+  ) +
+  geom_point(position = position_dodge(0.9), color = "gray70")
+```
+
+## lickometer plots
+
+### preference for sucrose in fr
+```{r}
+spout_pref_fr %>% 
+  ggplot(aes(
+    group,
+    mean_licks_group,
+    ymin = mean_licks_group - err,
+    ymax = mean_licks_group + err,
+    fill = tipo_recompensa
+  )) +
+  geom_col(position = "dodge") +
+  geom_errorbar(position = position_dodge(0.9), width = 0.3)
+```
+### progressive ratio licks over sessions
+```{r}
+pr_sessions %>% 
+  ggplot(aes(
+    session,
+    mean_licks,
+    ymin = mean_licks - err_licks,
+    ymax = mean_licks + err_licks,
+    color = experiment_id
+  )) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.3) +
+  facet_wrap(~group, scales = "free_x")
+```
+### progressive ratio events over sessions
+```{r}
+pr_sessions %>% 
+  ggplot(aes(
+    session,
+    mean_events,
+    ymin = mean_events - err_events,
+    ymax = mean_events + err_events,
+    color = experiment_id
+  )) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(width = 0.3) +
+  facet_wrap(~group, scales = "free_x")
+```
+### progressive ratio licks in T.O over sessions
+```{r}
+peri_event_data_pr_bin %>% 
+  ggplot(aes(
+    peri_breaks,
+    mean_n_licks,
+    color = experiment_id,
+    ymin = mean_n_licks - err,
+    ymax = mean_n_licks + err
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(fill = experiment_id)) +
+  geom_vline(xintercept = 10.5)
+```
+
+### progressive ratio licks in T.O over session cumulative
+```{r}
+peri_event_data_pr_bin_cum %>% 
+  ggplot(aes(
+    peri_breaks,
+    cum_licks,
+    color = experiment_id,
+    ymin = cum_licks - cum_err,
+    ymax = cum_licks + cum_err
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar(aes(fill = experiment_id)) +
+  geom_vline(xintercept = 10.5)
+```
+
+### licks over time bins
+```{r}
+pr_bin_data_ind %>% 
+  ggplot(aes(
+    bins,
+    m_licks,
+    color = protocol,
+    ymin = m_licks - err,
+    ymax = m_licks + err
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar() +
+  facet_grid(experiment_id~n_sesion, scales = "free_y")
+```
+
+# statistical analysis
+
+```{r}
+# raw plot
+pr_bin_data %>% 
+  ggplot(aes(
+    bins,
+    mean_licks,
+    ymin = mean_licks - err,
+    ymax = mean_licks + err,
+    color = experiment_id
+  )) +
+  geom_line() +
+  geom_point() +
+  geom_errorbar()
+
+# statistical model 1
+data_1 <- pr_bin_data_session
+data_2 <- pr_bin_data_session_last_pool
+
+# considering both controls as one control group
+model_1 <- lmer(
+  data = data_1,
+  n_licks ~ experiment_id + (1 | ID)
+)
+summary(model_1)
+
+# statistical model 2
+model_2 <- lmer(
+  data = data_1,
+  n_licks ~ experiment_id * as.numeric(n_sesion) + (1 | ID)
+)
+summary(model_2)
+
+# statistical model 3
+model_3 <- lmer(
+  data = data_1,
+  n_licks ~ experiment_id * as.numeric(n_sesion) * bins + (1 | ID)
+)
+summary(model_3)
+
+# considering only the last pool "high uncertainty"
+model_4 <- lmer(
+  data = data_2,
+  n_licks ~ experiment_id + (1 | ID)
+)
+summary(model_4)
+
+# statistical model 2
+model_5 <- lmer(
+  data = data_2,
+  n_licks ~ experiment_id * as.numeric(n_sesion) + (1 | ID)
+)
+summary(model_5)
+
+# statistical model 3
+model_6 <- lmer(
+  data = data_2,
+  n_licks ~ experiment_id * as.numeric(n_sesion) * bins + (1 | ID)
+)
+summary(model_6)
+
+# considering error by pool
+model_7 <- lmer(
+  data = data_1,
+  n_licks ~ experiment_id + (1 | ID:pool)
+)
+summary(model_7)
+
+# statistical model 2
+model_8 <- lmer(
+  data = data_1,
+  n_licks ~ experiment_id * as.numeric(n_sesion) + (1 | ID:pool)
+)
+summary(model_8)
+
+# statistical model 3
+model_9 <- lmer(
+  data = data_1,
+  n_licks ~ experiment_id * as.numeric(n_sesion) * bins + (1 | ID:pool)
+)
+summary(model_9)
+```
+
