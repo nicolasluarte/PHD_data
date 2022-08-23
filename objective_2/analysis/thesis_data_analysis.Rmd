@@ -31,8 +31,86 @@ devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/sr
 
 # load data sets
 
-This data sets correspond to experiments where FED food delivery was random, and
-motivation was tested using a progressive ratio in lickometer
+POOL 1
+
+```{r}
+# this data is in a different format because it was done in a previous
+# version of the lickometer
+# change col names before merging both pools
+data_pool1 <- readRDS('../data/objective_2_pool_1.RDS')
+```
+
+# stats pool 1
+
+```{r}
+# total number of licks
+data_mdl_1 <- data_pool1 %>% 
+  filter(n_sesion < 29) %>% 
+  group_by(
+    exp_group,
+    exp_phase,
+    ID,
+    n_sesion
+    ) %>% 
+  summarise(
+    licks = n(),
+    events = max(eventsCum),
+    rewards = max(rewardsCum),
+    lr = licks / rewards
+  )
+
+basal_licks <- data_mdl_1 %>% 
+  filter(exp_phase == "BASAL") %>% 
+  group_by(
+    ID
+  ) %>% 
+  summarise(
+    basal_licks = mean(licks),
+    basal_events = mean(events),
+    basal_lr = mean(lr)
+  )
+
+data_delta <- data_mdl_1 %>% 
+  left_join(basal_licks) %>% 
+  mutate(
+    delta_licks = ((licks - basal_licks) / basal_licks) * 100,
+    delta_events = ((events - basal_events) / basal_events) * 100,
+    delta_lr = ((lr - basal_lr) / basal_lr) * 100,
+  )
+
+mdl_1 <- lmer(
+  data = data_delta %>%  filter(exp_phase == "EXPERIMENTAL"),
+  delta_events ~ exp_group * n_sesion + (1 | ID)
+)
+summary(mdl_1)
+
+data_mdl_1_m <- data_mdl_1 %>% 
+  ungroup() %>% 
+  group_by(
+    exp_group,
+    exp_phase,
+    n_sesion
+  ) %>% 
+  summarise(
+    m = mean(licks),
+    s = sd(licks) / sqrt(n())
+  )
+
+data_mdl_1_m %>% 
+  ggplot(aes(
+    n_sesion,
+    m,
+    color = exp_group,
+    ymax = m + s,
+    ymin = m - s
+  )) +
+  geom_line() +
+  geom_errorbar()
+
+```
+
+
+This data sets correspond to experiments where one spout in the lickomter delivered rewards with a probability of 0.5 POOL 2
 
 ```{r}
 # set working directory where this file is located
@@ -40,9 +118,9 @@ cur_dir <- dirname(getSourceEditorContext()$path)
 setwd(cur_dir)
 
 # load experiment
-data_raw <- load_experiment(
+data_pool2 <- load_experiment(
   '../data/meta/lickometer_metadata.csv',
-  '../data/raw/pool_2/FR/'
+  '../data/raw/pool_2/FR'
 )
 ```
 # plots
