@@ -21,7 +21,9 @@ pacman::p_load(
   lmerTest,
   googledrive,
   ggpubr,
-  cowplot
+  cowplot,
+  sjPlot,
+  ggsignif
 )
 
 # source lickometer library
@@ -38,12 +40,55 @@ POOL 1
 # version of the lickometer
 # change col names before merging both pools
 data_pool1 <- readRDS('../data/objective_2_pool_1.RDS')
+
+data_pool1 <- data_pool1 %>% 
+  filter(
+    complete_data == TRUE,
+    start <= pcTime &
+        pcTime <= end
+  )
 ```
 
 # stats pool 1
 
 ```{r}
-# total number of licks
+# licks on each spout
+data_pref <- data_pool1 %>% 
+  filter(exp_group == "UNC", exp_phase == "EXPERIMENTAL") %>% 
+  group_by(
+    ID,
+    n_sesion,
+    is_random
+  ) %>% 
+  mutate(
+     event_uncum = if_else(eventsCum - lag(eventsCum) > 0, 1, 0),
+  ) %>% 
+  summarise(
+    licks = n(),
+    events = sum(event_uncum, na.rm = TRUE)
+  ) %>% 
+  ungroup() %>% 
+  pivot_wider(
+    names_from = is_random,
+    values_from = c("licks", "events")
+  ) %>% 
+  mutate(
+    licks_diff = licks_FALSE - licks_TRUE,
+    events_diff = events_FALSE - events_TRUE,
+    licks_ratio = licks_FALSE / licks_TRUE,
+    events_ratio = events_FALSE / events_TRUE
+  )
+  
+# pref
+pref_t <- t.test(data_pref$licks_FALSE, data_pref$licks_TRUE, paired = TRUE, alternative = "two.sided")
+
+pref_mdl <- lmer(
+  data = data_pref,
+  licks_diff ~ (1 | ID)
+)
+summary(pref_mdl)
+
+#total number of licks
 data_mdl_1 <- data_pool1 %>% 
   filter(n_sesion < 29) %>% 
   group_by(
@@ -80,9 +125,17 @@ data_delta <- data_mdl_1 %>%
 
 mdl_1 <- lmer(
   data = data_delta %>%  filter(exp_phase == "EXPERIMENTAL"),
-  delta_events ~ exp_group * n_sesion + (1 | ID)
+  delta_licks ~ exp_group * n_sesion + (1 | ID)
 )
 summary(mdl_1)
+confint(mdl_1)
+
+mdl_2 <- lmer(
+  data = data_delta %>%  filter(exp_phase == "EXPERIMENTAL"),
+  delta_events ~ exp_group * n_sesion + (1 | ID)
+)
+summary(mdl_2)
+confint(mdl_2)
 
 data_mdl_1_m <- data_mdl_1 %>% 
   ungroup() %>% 
@@ -109,8 +162,168 @@ data_mdl_1_m %>%
 
 ```
 
+# bins
+```{r}
+data_bins <- data_pool1 %>%
+    group_by(
+      ID,
+      n_sesion
+      ) %>%
+    mutate(
+      # variable timestamp contains time relative to the start of the session,
+      # bins are calculated based on the 
+      # length of the session
+      bins = cut(
+        msFromStart_corr,
+        breaks = seq(0, 60 * 60 * 1e3, by = 1 * 60 * 1e3),
+        labels = FALSE,
+        include.lowest = TRUE))
 
-This data sets correspond to experiments where one spout in the lickomter delivered rewards with a probability of 0.5 POOL 2
+bin_baseline <- data_bins %>% 
+  filter(exp_phase == "BASAL") %>% 
+  group_by(ID, bins, n_sesion) %>% 
+  summarise(
+    basal_bin_licks = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(ID, bins) %>% 
+  summarise(
+    basal_licks = mean(basal_bin_licks)
+  ) %>% 
+  drop_na()
+
+data_bins_baseline <- data_bins %>% 
+  mutate(event_uncum = if_else(eventsCum - lag(eventsCum) > 0, 1, 0)) %>% 
+  group_by(ID, n_sesion, exp_group, exp_phase, bins) %>% 
+  summarise(
+    licks = n(),
+    events = sum(event_uncum, na.rm = TRUE)
+  ) %>% 
+  left_join(bin_baseline) %>% 
+  mutate(
+    delta_licks = licks - basal_licks
+  )
+
+# burst
+data_burst <- data_pool1 %>% 
+  rename(
+    timestamp = msFromStart_corr,
+    sensor = spoutNumber,
+    tipo_recompensa = is_random,
+    group = exp_group
+  ) %>% 
+  mutate(pool = "pool_1", interval = msFromStart - lag(msFromStart))
+
+burst <- burst_analysis(data_burst, 500)
+
+# number of clusters
+burst_size <- burst %>% 
+  mutate(
+    exp_phase = if_else(n_sesion > 12, "EXPERIMENTAL", "BASAL")
+    ) %>% 
+  group_by(ID, n_sesion, group, exp_phase) %>% 
+  filter(values == "in_cluster")
+
+basal_cluster <- burst_size %>% 
+  filter(exp_phase == "BASAL") %>% 
+  group_by(ID) %>% 
+  summarise(basal_cluster_size = mean(cluster_length_m)) %>% 
+  select(ID, basal_cluster_size)
+
+burst_size_basal <- burst_size %>% 
+  left_join(basal_cluster, by = c("ID")) %>% 
+  mutate(
+    delta_length = cluster_length_m - basal_cluster_size
+  )
+
+mdl_burst <- lmer(
+  data = burst_size,
+  cluster_length ~ exp_phase * group +(1 | ID)
+)
+summary(mdl_burst)
+emmeans::emmeans(mdl_burst, pairwise ~ exp_phase * group)
+confint(burst_emm)
+
+# percent
+pref_perc <- data_pool1 %>% 
+  group_by(ID, n_sesion, is_random, exp_phase, exp_group) %>% 
+  summarise(
+    licks = n()
+  ) %>% 
+  filter(exp_phase == "EXPERIMENTAL", exp_group == "UNC") %>% 
+  pivot_wider(
+    names_from = is_random,
+    values_from = licks
+  ) %>% 
+  mutate(
+    ratio = `TRUE` / (`TRUE` + `FALSE`) 
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID
+  ) %>% 
+  summarise(m = mean(ratio)) %>% 
+  ungroup() %>% 
+  summarise(mm = mean(m), s = sd(m) / sqrt(n()))
+
+# plot percent
+pref_plot <- data_pool1 %>% 
+  group_by(ID, n_sesion, is_random, exp_phase, exp_group) %>% 
+  summarise(
+    licks = n()
+  ) %>% 
+  filter(exp_phase == "EXPERIMENTAL", exp_group == "UNC")
+
+pref_plot %>% 
+  mutate(is_random = if_else(is_random == FALSE, "Non-random", "Random"),
+         exp_group = if_else(exp_group == "UNC", "Uncertainty", "Control")) %>% 
+  group_by(n_sesion, is_random) %>% 
+  summarise(
+    m = mean(licks),
+    s = sd(licks) / sqrt(n())
+  ) %>% 
+  ungroup() %>% 
+  group_by(is_random) %>% 
+  summarise(
+    mm = mean(m),
+    ss = sd(m) / sqrt(n())
+  ) %>% 
+  ggplot(aes(is_random,
+             mm,
+             ymax = mm + ss,
+             ymin = mm - ss,
+             fill = is_random)) +
+  geom_col() +
+  geom_errorbar(width = 0.3) +
+  theme_pubr() +
+  theme(legend.position = "none") +
+  geom_signif(
+    comparisons = list(c("Non-random", "Random")),
+    map_signif_level = TRUE, annotations = c("*")
+  ) +
+  xlab("") +
+  ylab("Mean number of licks")
+ggsave("../images/figure6.png", width = 6, height = 4)
+
+# lmer
+mdl_bins <- lmer(
+  data = data_bins_baseline %>%  filter(exp_phase == "EXPERIMENTAL"),
+  delta_licks ~ exp_group * bins +(1 | ID)
+)
+summary(mdl_bins)
+confint(mdl_bins)
+plot_model(mdl_bins, type = "pred", terms = c("bins", "exp_group")) +
+  theme_pubr() +
+  theme(legend.position = "right", legend.title = element_blank()) +
+  scale_color_manual(labels = c("Control", "Uncertainty"), values = c("blue", "red")) +
+  ggtitle("") +
+  ylab("Model number of licks estimates") +
+  xlab("Session time (m)")
+ggsave("../images/figure7.png", width = 6, height = 4)
+```
+
+
+This data sets correspond to experiments where one spout in the lickometer delivered rewards with a probability of 0.5 POOL 2
 
 ```{r}
 # set working directory where this file is located
