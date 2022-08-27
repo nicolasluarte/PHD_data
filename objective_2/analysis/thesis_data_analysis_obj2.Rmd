@@ -434,3 +434,72 @@ p3 <- p3 +
 plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12)
 ```
 
+# POOL 2
+
+```{r}
+data_pool2 <- load_experiment(
+  '../data/meta/lickometer_metadata.csv',
+  '../data/raw/pool_2/FR'
+)
+
+total_licks <- data_pool2 %>% 
+  group_by(
+    ID,
+    n_sesion
+  ) %>% 
+  summarise(
+    total_licks = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID
+  ) %>% 
+  mutate(
+    z_licks = scale(total_licks)
+  )
+
+mm <- total_licks %>% 
+  ungroup() %>% 
+  group_by(
+    n_sesion
+  ) %>% 
+  summarise(
+    m = mean(z_licks),
+    s = sd(z_licks) / sqrt(n())
+  )
+
+total_licks %>% 
+  ggplot(aes(
+    n_sesion,
+    z_licks,
+    group = ID
+    )) +
+  geom_point() +
+  geom_line() +
+  geom_line(
+    inherit.aes = FALSE,
+    data = mm,
+    group = 1,
+    color = "red",
+    aes(n_sesion, m
+    )
+  ) +
+    geom_point(
+    inherit.aes = FALSE,
+    data = mm,
+    group = 1,
+    color = "red",
+    aes(n_sesion, m
+    )
+  ) +
+    geom_errorbar(
+    inherit.aes = FALSE,
+    data = mm,
+    group = 1,
+    color = "red",
+    width = 0.3,
+    aes(ymin = m - s, ymax = m + s, n_sesion
+    )
+  )
+```
+
