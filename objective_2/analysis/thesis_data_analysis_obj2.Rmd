@@ -458,6 +458,21 @@ total_licks <- data_pool2 %>%
     z_licks = scale(total_licks)
   )
 
+# ID means
+id_means <- total_licks %>% 
+  ungroup() %>% 
+  group_by(ID) %>% 
+  summarise(
+    m = mean(total_licks)
+  ) %>% 
+  arrange(desc(m))
+
+trt <- id_means %>% filter(ID %in% c(394, 398, 393, 400))
+ctrl <- id_means %>% filter(ID %in% c(397, 396, 395, 399))
+
+t.test(trt$m, ctrl$m)
+
+
 mm <- total_licks %>% 
   ungroup() %>% 
   group_by(
@@ -470,36 +485,12 @@ mm <- total_licks %>%
 
 total_licks %>% 
   ggplot(aes(
-    n_sesion,
+    as.numeric(n_sesion),
     z_licks,
     group = ID
     )) +
   geom_point() +
-  geom_line() +
-  geom_line(
-    inherit.aes = FALSE,
-    data = mm,
-    group = 1,
-    color = "red",
-    aes(n_sesion, m
-    )
-  ) +
-    geom_point(
-    inherit.aes = FALSE,
-    data = mm,
-    group = 1,
-    color = "red",
-    aes(n_sesion, m
-    )
-  ) +
-    geom_errorbar(
-    inherit.aes = FALSE,
-    data = mm,
-    group = 1,
-    color = "red",
-    width = 0.3,
-    aes(ymin = m - s, ymax = m + s, n_sesion
-    )
-  )
+  geom_line()
+  
 ```
 
