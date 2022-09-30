@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# load libs
+# Load libs
 
 ```{r}
 pacman::p_load(
@@ -31,7 +31,18 @@ devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/sr
 
 ```
 
-# load data sets
+# Load data sets
+
+```{r}
+# connect to google drive and download data
+# drive_auth()
+drive_find(n_max = 30, q = "name contains 'Luis Luarte'", type = "folder")
+drive_get(id = "1VysYqgd8Lv0vVfMKdaGL9tJOYpM-nBwo_2UupJT7OpQ")
+drive_download(file = "1VysYqgd8Lv0vVfMKdaGL9tJOYpM-nBwo_2UupJT7OpQ", 
+               path = "/home/nicoluarte/test.csv",
+               type = "csv")
+```
+
 
 POOL 1
 
