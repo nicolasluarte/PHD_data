@@ -19,20 +19,23 @@ pacman::p_load(
 )
 ```
 
-# Import weight data
+# Helper functions
+```{r}
+
+```
+
+# Import data
 
 ```{r}
+# weights
 weight_data <- read_csv("https://raw.githubusercontent.com/nicolasluarte/PHD_data/main/objective_1/data/raw/weights/weights_pool3.csv") %>% 
   mutate(
     ID = as.factor(ID),
     date = lubridate::ymd(date),
     weight = as.numeric(weight)
   )
-```
 
-# Import intake data
-
-```{r}
+# fed data
 intake_files <- list.files(path = "~/repos/nbolab_FED/raw_data/",
                           pattern = "^4",
                           recursive = TRUE,
@@ -41,30 +44,48 @@ intake_data <- read_csv(intake_files) %>%
   mutate(
     time = lubridate::as_datetime(time),
     date = lubridate::date(time),
-    animal = as.factor(animal)
+    animal = as.factor(animal),
+    delay = as.numeric(delay)
   ) %>% 
   filter(time >= "2022-09-26 00:00:00") %>% 
-  rename(ID = animal)
+  rename(ID = animal) %>%
+  group_by(ID) %>% 
+  group_nest(., keep = TRUE, .key = "intake_raw")
 ```
 
 # Intake data analysis
 
 ```{r}
-intake_data_daily <- intake_data %>% 
-  group_by(date, ID) %>% 
-  summarise(
-    pellets = n()
-  ) %>% 
-  ungroup()
-
-intake_data_m <- intake_data_daily %>% 
-  group_by(date) %>% 
-  summarise(
-    pellets_ = mean(pellets),
-    e = sd(pellets) / sqrt(n())
-  ) %>% 
-  rename(pellets = pellets_) %>% 
-  mutate(ID = "Mean intake")
+intake_data <- intake_data %>% 
+  mutate(
+    # add daily intake summary data
+    daily_intake = map(intake_raw, function(df){
+      df %>% 
+        group_by(date, ID) %>% 
+        summarise(
+          pellets = n()
+        ) %>% 
+        ungroup()
+    }),
+    # add hourly intake summary data
+    hourly_intake = map(intake_raw, function(df){
+      df %>% 
+        group_by(lubridate::hour(time), ID) %>% 
+        summarise(
+          pellets = n()
+        ) %>% 
+        ungroup()
+    }),
+    # add intake lag
+    intake_lag = map(intake_raw, function(df){
+      df %>% 
+      group_by(date, ID) %>% 
+        mutate(
+          intake_lag = replace_na(as.numeric(time - lag(time)), 0) - delay
+        ) %>% 
+        ungroup()
+    })
+  )
 ```
 
 # weight data analysis
@@ -82,6 +103,17 @@ weight_data_m <- weight_data %>%
 # Data merge
 
 ```{r}
+# daily intake data
+intake_data_daily <- intake_data$daily_intake %>% bind_rows()
+# daily intake data means
+intake_data_m <- intake_data_daily %>% 
+  ungroup() %>% 
+  group_by(date) %>% 
+  summarise(
+    pellets_ = mean(pellets),
+    e = sd(pellets) / sqrt(n())
+  ) %>% 
+  rename(pellets = pellets_)
 weight_intake <- intake_data_daily %>% 
   complete(., date, ID, fill = list(pellets = 1)) %>% 
   left_join(weight_data, by = c("date", "ID")) %>% 
@@ -118,21 +150,21 @@ weight_data %>%
 # intake plot
 
 intake_data_daily %>% 
-  filter(date < "2022-09-30") %>% 
+  filter(date < "2022-10-03") %>% 
   ggplot(aes(date, pellets, color = ID)) +
   geom_line() +
   geom_point() +
   geom_line(
-    data = intake_data_m %>% filter(date < "2022-09-30"),
+    data = intake_data_m %>% filter(date < "2022-10-03"),
     color = "black"
   ) +
   geom_errorbar(
-    data = intake_data_m %>% filter(date < "2022-09-30"),
+    data = intake_data_m %>% filter(date < "2022-10-03"),
     color = "black",
     aes(ymin = pellets - e, ymax = pellets + e)
   ) +
   geom_point(
-    data = intake_data_m %>% filter(date < "2022-09-30"),
+    data = intake_data_m %>% filter(date < "2022-10-03"),
     color = "black"
   ) +
   theme_pubr()
