@@ -33,31 +33,156 @@ devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/sr
 
 # Load data sets
 
+POOL 1, POOl 2
+
 ```{r}
-# connect to google drive and download data
-# drive_auth()
-drive_find(n_max = 30, q = "name contains 'Luis Luarte'", type = "folder")
-drive_get(id = "1VysYqgd8Lv0vVfMKdaGL9tJOYpM-nBwo_2UupJT7OpQ")
-drive_download(file = "1VysYqgd8Lv0vVfMKdaGL9tJOYpM-nBwo_2UupJT7OpQ", 
-               path = "/home/nicoluarte/test.csv",
-               type = "csv")
+# # this data is in a different format because it was done in a previous
+# # version of the lickometer
+# # change col names before merging both pools
+# data_pool1 <- readRDS('../data/objective_2_pool_1.RDS')
+# 
+# data_pool1 <- data_pool1 %>%
+#   filter(
+#     complete_data == TRUE,
+#     start <= pcTime &
+#         pcTime <= end,
+#     n_sesion != 29
+#   ) %>%
+#   mutate(
+#     actividad = licksCum,
+#     sensor = as.factor(if_else(spoutNumber == "RIGHT", 1, 0)),
+#     tiempo = msFromStart,
+#     evento = eventsCum,
+#     exito = as.factor(rewardsCum),
+#     fecha = date,
+#     exp_phase = if_else(exp_phase == "BASAL", "basal", "experimental"),
+#     exp_group = if_else(exp_group == "CONTROL", "control", "experimental"),
+#     tipo_recompensa = if_else(is_random == FALSE, "sacarosa", "sacarosar"),
+#     pool = "pool_1",
+#     n_sesion = as.factor(n_sesion)
+#   ) %>%
+#   select(
+#     fecha, ID, sensor, tiempo, actividad, evento, exito, tipo_recompensa, pool, n_sesion, exp_phase, exp_group
+#   )
+# 
+# data_pool2 <- load_experiment(
+#   '../data/meta/lickometer_metadata.csv',
+#   '../data/raw/pool_2'
+# )
+# saveRDS(data_pool2, '../data/objective_2_pool_2.RDS')
+# data_pool2 <- readRDS('../data/objective_2_pool_2.RDS') %>%
+#   select(
+#     fecha, ID, sensor, tiempo, actividad, evento, exito, tipo_recompensa, pool, n_sesion
+#   ) %>%
+#   mutate(exp_phase = if_else(as.numeric(n_sesion) >= 13, "experimental", "basal"),
+#          exp_group = if_else(ID %in% c(393, 394, 398, 400), "experimental", "control"))
+# 
+# objective_2_data <- bind_rows(data_pool1, data_pool2)
+# saveRDS(objective_2_data, '../data/objective_2_complete.RDS')
+objective_2_data <- readRDS('../data/objective_2_complete.RDS')
 ```
 
-
-POOL 1
+# analysis
 
 ```{r}
-# this data is in a different format because it was done in a previous
-# version of the lickometer
-# change col names before merging both pools
-data_pool1 <- readRDS('../data/objective_2_pool_1.RDS')
-
-data_pool1 <- data_pool1 %>% 
-  filter(
-    complete_data == TRUE,
-    start <= pcTime &
-        pcTime <= end
+# add a column with mean baseline licks per spout
+baseline <- objective_2_data %>% 
+  filter(as.numeric(n_sesion) <= 12) %>% 
+  group_by(
+    ID,
+    n_sesion,
+    sensor
+  ) %>% 
+  summarise(
+    evento_b = max(evento),
+    actividad_b = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID,
+    sensor
+  ) %>% 
+  summarise(
+    evento_basal_ = mean(evento_b),
+    actividad_basal_ = mean(actividad_b)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID
+  ) %>%
+  summarise(
+    evento_basal = mean(evento_basal_),
+    actividad_basal = mean(actividad_basal_)
+  ) %>% 
+  ungroup()
+# add baseline
+df <- objective_2_data %>% 
+  group_by(ID, n_sesion, sensor) %>% 
+  # correct 'actividad' , 'evento' , 'exito'
+  mutate(
+    actividad = actividad - actividad[1],
+    evento = evento - evento[1],
+    exito = as.numeric(exito),
+    exito = exito - exito[1]
+  ) %>%
+  ungroup() %>% 
+  group_by(
+    ID,
+    n_sesion,
+    sensor
+  ) %>% 
+  mutate(
+    evento_bin = evento - lag(evento, default = 0),
+    actividad_bin = actividad - lag(actividad, default = 0),
+    exito_bin = exito - lag(exito, default = 0)
   )
+# summary per ID per date
+df_summ <- df %>% 
+  group_by(
+    n_sesion,
+    ID,
+    sensor,
+    tipo_recompensa,
+    pool,
+    exp_group,
+    exp_phase
+  ) %>% 
+  summarise(
+    actividad_summ = n(),
+    evento_summ = sum(evento_bin),
+    exito_summ = sum(exito_bin)
+  ) %>% 
+  ungroup() %>% 
+  left_join(baseline, by = c("ID")) %>% 
+  mutate(
+    evento_delta = evento_summ - evento_basal,
+    actividad_delta = actividad_summ - actividad_basal
+  )
+
+# mean differences
+df_summ_m <- df_summ %>%
+  group_by(
+    exp_phase,
+    exp_group,
+    n_sesion,
+    tipo_recompensa
+  ) %>% 
+  summarise(
+    evento_delta_m = mean(evento_delta),
+    actividad_delta_m = mean(actividad_delta)
+  ) %>% 
+  ungroup()
+
+df_summ %>% 
+  group_by(tipo_recompensa, exp_group, exp_phase) %>% 
+  summarise(m = mean(actividad_delta))
+  
+  
+df_summ %>% 
+  filter(exp_phase == "experimental", exp_group == "experimental") %>% 
+  ggplot(aes(tipo_recompensa, actividad_delta)) +
+  geom_boxplot()
+
 ```
 
 # stats pool 1
@@ -344,7 +469,7 @@ setwd(cur_dir)
 # load experiment
 data_pool2 <- load_experiment(
   '../data/meta/lickometer_metadata.csv',
-  '../data/raw/pool_2/FR'
+  '../data/raw/pool_2'
 )
 ```
 # plots
@@ -450,58 +575,47 @@ plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12)
 ```{r}
 data_pool2 <- load_experiment(
   '../data/meta/lickometer_metadata.csv',
-  '../data/raw/pool_2/FR'
+  '../data/raw/pool_2'
 )
 
-total_licks <- data_pool2 %>% 
-  group_by(
-    ID,
-    n_sesion
-  ) %>% 
+# add groups and experimental phase
+data_pool2 <- data_pool2 %>% 
+  mutate(
+    exp_phase = if_else(as.numeric(n_sesion) >= 13, "experimental", "basal"),
+    exp_group = if_else(ID %in% c(393, 394, 398, 400), "uncertainty", "control")
+  )
+
+data_pool1_mdl <- data_pool1 %>% 
+  group_by(ID, n_sesion, exp_group, exp_phase) %>% 
+  summarise(
+    total_licks = n()
+  )  %>% 
+  mutate(
+    n_sesion = as.numeric(n_sesion),
+    exp_group = if_else(exp_group == "UNC", "uncertainty", "control"),
+    exp_phase = if_else(exp_phase == "BASAL", "basal", "experimental")
+    ) %>% 
+  group_by(ID, n_sesion) %>% 
+  arrange(n_sesion, by_group = TRUE) %>% 
+  filter(n_sesion != 29) %>% 
+  mutate(pool = 1)
+
+data_pool2_mdl <- data_pool2 %>% 
+  group_by(ID, n_sesion, exp_group, exp_phase) %>% 
   summarise(
     total_licks = n()
   ) %>% 
-  ungroup() %>% 
-  group_by(
-    ID
-  ) %>% 
-  mutate(
-    z_licks = scale(total_licks)
-  )
+  mutate(n_sesion = as.numeric(n_sesion)) %>% 
+  group_by(ID, n_sesion) %>% 
+  arrange(n_sesion, by_group = TRUE) %>% 
+  mutate(pool = 2)
 
-# ID means
-id_means <- total_licks %>% 
-  ungroup() %>% 
-  group_by(ID) %>% 
-  summarise(
-    m = mean(total_licks)
-  ) %>% 
-  arrange(desc(m))
+pool_merge = bind_rows(data_pool1_mdl, data_pool2_mdl)
 
-trt <- id_means %>% filter(ID %in% c(394, 398, 393, 400))
-ctrl <- id_means %>% filter(ID %in% c(397, 396, 395, 399))
-
-t.test(trt$m, ctrl$m)
-
-
-mm <- total_licks %>% 
-  ungroup() %>% 
-  group_by(
-    n_sesion
-  ) %>% 
-  summarise(
-    m = mean(z_licks),
-    s = sd(z_licks) / sqrt(n())
-  )
-
-total_licks %>% 
-  ggplot(aes(
-    as.numeric(n_sesion),
-    z_licks,
-    group = ID
-    )) +
-  geom_point() +
-  geom_line()
-  
+licks_mdl <- lmer(
+  data = pool_merge,
+  total_licks ~ exp_group * exp_phase * n_sesion + (1 | ID) + (1 | pool)
+)
+summary(licks_mdl)
 ```
 

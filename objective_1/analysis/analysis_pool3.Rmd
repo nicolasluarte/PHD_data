@@ -126,6 +126,28 @@ pellets_gr <- weight_intake %>%
   mutate(pellets_gr = pellets / weight_intrp)
 ```
 
+# group assig
+
+```{r}
+intake_m <- intake_data_daily %>% 
+  group_by(ID) %>% 
+  summarise(i = mean(pellets))
+weight_m <- weight_data %>% 
+  group_by(ID) %>% 
+  summarise(w = mean(weight))
+assig <- left_join(intake_m, weight_m) %>% 
+  arrange(desc(i))
+trt <- c(416, 413, 418, 417, 419)
+assig <- assig %>% 
+  mutate(exp_group = if_else(ID %in% trt, "experimental", "control")) %>% 
+  arrange(ID)
+# test for diffs
+# intake
+summary(lm(data = assig, i ~ exp_group))
+# weight
+summary(lm(data = assig, w ~ exp_group))
+```
+
 # Plots
 
 ```{r}
