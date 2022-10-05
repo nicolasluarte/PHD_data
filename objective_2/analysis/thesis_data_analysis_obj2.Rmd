@@ -58,8 +58,7 @@ POOL 1, POOl 2
 #     exp_phase = if_else(exp_phase == "BASAL", "basal", "experimental"),
 #     exp_group = if_else(exp_group == "CONTROL", "control", "experimental"),
 #     tipo_recompensa = if_else(is_random == FALSE, "sacarosa", "sacarosar"),
-#     pool = "pool_1",
-#     n_sesion = as.factor(n_sesion)
+#     pool = "pool_1"
 #   ) %>%
 #   select(
 #     fecha, ID, sensor, tiempo, actividad, evento, exito, tipo_recompensa, pool, n_sesion, exp_phase, exp_group
@@ -74,27 +73,239 @@ POOL 1, POOl 2
 #   select(
 #     fecha, ID, sensor, tiempo, actividad, evento, exito, tipo_recompensa, pool, n_sesion
 #   ) %>%
-#   mutate(exp_phase = if_else(as.numeric(n_sesion) >= 13, "experimental", "basal"),
-#          exp_group = if_else(ID %in% c(393, 394, 398, 400), "experimental", "control"))
+#   mutate(
+#     n_sesion = as.numeric(as.character(n_sesion)),
+#     exp_phase = if_else(as.numeric(n_sesion) > 12, "experimental", "basal"),
+#     exp_group = if_else(ID %in% c(393, 394, 398, 400), "experimental", "control")
+#     )
 # 
 # objective_2_data <- bind_rows(data_pool1, data_pool2)
 # saveRDS(objective_2_data, '../data/objective_2_complete.RDS')
 objective_2_data <- readRDS('../data/objective_2_complete.RDS')
+objective_2_data <- objective_2_data %>% 
+  group_by(ID, n_sesion, sensor) %>% 
+  # correct 'actividad' , 'evento' , 'exito'
+  mutate(
+    actividad = actividad - actividad[1],
+    evento = evento - evento[1],
+    exito = as.numeric(exito),
+    exito = exito - exito[1],
+    evento_bin = evento - lag(evento, default = 0),
+    actividad_bin = actividad - lag(actividad, default = 0),
+    exito_bin = exito - lag(exito, default = 0)
+  ) %>%
+  ungroup()
 ```
 
-# analysis
+# mean total difference with baseline
 
 ```{r}
 # add a column with mean baseline licks per spout
+baseline_total <- objective_2_data %>% 
+  filter(n_sesion <= 12, n_sesion >= 7) %>% 
+  group_by(
+    ID,
+    n_sesion
+  ) %>% 
+  summarise(
+    evento_basal_ = sum(evento_bin),
+    actividad_basal_ = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID
+  ) %>%
+  summarise(
+    evento_basal = mean(evento_basal_),
+    actividad_basal = mean(actividad_basal_)
+  ) %>% 
+  ungroup()
+
+# add baseline
+df_summ_total <- objective_2_data %>% 
+  group_by(
+    n_sesion,
+    ID,
+    pool,
+    exp_group,
+    exp_phase
+  ) %>% 
+  summarise(
+    actividad_summ = n(),
+    evento_summ = sum(evento_bin),
+    exito_summ = sum(exito_bin)
+  ) %>% 
+  ungroup() %>% 
+  left_join(baseline_total, by = c("ID")) %>% 
+  mutate(
+    evento_delta = ((evento_summ - evento_basal) / evento_basal) * 100,
+    actividad_delta = ((actividad_summ - actividad_basal) / actividad_basal) * 100
+  ) %>% 
+  ungroup()
+
+# mean differences
+df_summ_m_total <- df_summ_total %>%
+  group_by(
+    exp_phase,
+    exp_group,
+    n_sesion,
+  ) %>% 
+  summarise(
+    evento_delta_m = mean(evento_delta),
+    actividad_delta_m = mean(actividad_delta)
+  ) %>% 
+  ungroup()
+
+# licks
+total_activity_licks <- lmer(
+  data = df_summ_total,
+  actividad_summ ~ exp_group * exp_phase * n_sesion + actividad_basal + (1 | ID)+ (1 | pool)
+)
+summary(total_activity_licks)
+
+total_activity_df <- plot_model(total_activity_licks, type = "int")[[1]]$data %>% as_tibble()
+
+# events
+total_events_licks <- lmer(
+  data = df_summ_total,
+  evento_summ ~ exp_group * exp_phase + evento_basal + (1 | ID)+ (1 | pool)
+)
+summary(total_events_licks)
+
+total_events_df <- plot_model(total_events_licks, type = "int")$data %>% as_tibble()
+
+# total_activity_licks <- lmer(
+#   data = df_summ_total %>% filter(exp_phase == "experimental"),
+#   actividad_delta ~ exp_group + (1 | ID/pool)
+# )
+# summary(total_activity_licks)
+
+
+group_m <- df_summ_m_total %>% 
+  filter(exp_phase == "experimental") %>% 
+  group_by(exp_group, exp_phase) %>% 
+  summarise(
+    m = mean(actividad_delta_m),
+    s = sd(actividad_delta_m) / sqrt(n())
+    )
+
+p1 <- group_m %>% 
+  ggplot(aes(exp_group, m,
+             ymin = m - s, ymax = m + s,
+             fill = exp_group, color = exp_group)) +
+  geom_col(width = 0.5) +
+  geom_errorbar(width = 0.3) +
+  geom_hline(yintercept = 0, color = "gray") +
+  scale_fill_manual(values = c("black", "#56B4E9")) +
+  scale_color_manual(values = c("black", "#56B4E9")) +
+  scale_x_discrete(labels = c("Control", "Uncertainty")) +
+  theme_pubr() +
+  xlab("") +
+  ylab("%Δ Total number of licks") +
+  theme(
+    legend.position = "none"
+  )
+ggsave("../images/extra1.png", p1, width = 6, height = 4)
+
+p2 <- total_activity_df %>% 
+  mutate(x = if_else(x == 1, "Basal", "Uncertainty")) %>% 
+  ggplot(aes(group, predicted, fill = x, color = x)) +
+  geom_col(position = "dodge2") +
+  geom_errorbar(aes(
+    ymin = conf.low, ymax = conf.high
+  ), position = position_dodge(0.9), width = 0.3) +
+  scale_fill_manual(values = c("black", "#56B4E9")) +
+  scale_color_manual(values = c("black", "#56B4E9")) +
+  theme_pubr() +
+  ylab("Number of licks estimates") +
+  xlab("") +
+  scale_x_discrete(labels = c("Control", "Uncertainty")) +
+  labs(fill = "Experimental phase", color = "Experimental phase") + 
+  geom_signif(
+    y_position = c(1500, 1500), xmin = c(0.8, 1.8), xmax = c(1.2, 2.2),
+    annotation = c("NS", "**"), tip_length = 0
+  )
+ggsave("../images/extra2.png", p2, width = 6, height = 4)
+
+p3 <- total_events_df %>% 
+  mutate(x = if_else(x == 1, "Basal", "Uncertainty")) %>% 
+  ggplot(aes(group, predicted, fill = x, color = x)) +
+  geom_col(position = "dodge2") +
+  geom_errorbar(aes(
+    ymin = conf.low, ymax = conf.high
+  ), position = position_dodge(0.9), width = 0.3) +
+  scale_fill_manual(values = c("black", "#56B4E9")) +
+  scale_color_manual(values = c("black", "#56B4E9")) +
+  theme_pubr() +
+  ylab("Number of events estimates") +
+  xlab("") +
+  scale_x_discrete(labels = c("Control", "Uncertainty")) +
+  labs(fill = "Experimental phase", color = "Experimental phase") + 
+  geom_signif(
+    y_position = c(80, 80), xmin = c(0.8, 1.8), xmax = c(1.2, 2.2),
+    annotation = c("NS", "**"), tip_length = 0
+  )
+ggsave("../images/extra3.png", p3, width = 6, height = 4)
+```
+
+# mean difference with basaline per spout
+
+```{r}
+
+reward_comparison <- objective_2_data %>% 
+  filter(exp_group == "experimental", exp_phase == "experimental") %>% 
+  group_by(tipo_recompensa, n_sesion, ID) %>% 
+  summarise(l = n()) %>%
+  ungroup() %>% 
+  group_by(tipo_recompensa, n_sesion) %>% 
+  summarise(licks = mean(l)) %>% 
+  ungroup() %>% 
+  group_by(tipo_recompensa) %>%
+  summarise(m = mean(licks), s = sd(licks)/sqrt(n())) %>% 
+  ungroup()
+
+reward_comparison_mdl <- objective_2_data %>% 
+  filter(exp_group == "experimental", exp_phase == "experimental") %>% 
+  group_by(tipo_recompensa, n_sesion, ID) %>% 
+  summarise(l = n())
+
+reward_mdl <- lmer(
+  data = reward_comparison_mdl,
+  l ~ tipo_recompensa + (1 | ID)
+)
+summary(reward_mdl)
+
+p4 <- reward_comparison %>% 
+  ggplot(aes(tipo_recompensa, m,
+             ymin = m - s, ymax = m + s,
+             fill = tipo_recompensa, color = tipo_recompensa)) +
+  geom_col(width = 0.5) +
+  geom_errorbar(width = 0.3) +
+  scale_fill_manual(values = c("black", "#56B4E9")) +
+  scale_color_manual(values = c("black", "#56B4E9")) +
+  scale_x_discrete(labels = c("Non-random", "Random")) +
+  theme_pubr() +
+  xlab("") +
+  ylab("Total number of licks") +
+  theme(
+    legend.position = "none"
+  ) +
+  geom_signif(
+    y_position = c(750), xmin = c(0.8), xmax = c(2.2),
+    annotation = c("**"), tip_length = 0
+  )
+ggsave("../images/extra3.png", p4, width = 6, height = 4)
+
+# add a column with mean baseline licks per spout
 baseline <- objective_2_data %>% 
-  filter(as.numeric(n_sesion) <= 12) %>% 
+  filter(n_sesion <= 12, n_sesion >= 7) %>% 
   group_by(
     ID,
     n_sesion,
     sensor
   ) %>% 
   summarise(
-    evento_b = max(evento),
+    evento_b = sum(evento_bin),
     actividad_b = n()
   ) %>% 
   ungroup() %>% 
@@ -115,27 +326,39 @@ baseline <- objective_2_data %>%
     actividad_basal = mean(actividad_basal_)
   ) %>% 
   ungroup()
-# add baseline
-df <- objective_2_data %>% 
-  group_by(ID, n_sesion, sensor) %>% 
-  # correct 'actividad' , 'evento' , 'exito'
-  mutate(
-    actividad = actividad - actividad[1],
-    evento = evento - evento[1],
-    exito = as.numeric(exito),
-    exito = exito - exito[1]
-  ) %>%
-  ungroup() %>% 
-  group_by(
-    ID,
-    n_sesion,
-    sensor
-  ) %>% 
-  mutate(
-    evento_bin = evento - lag(evento, default = 0),
-    actividad_bin = actividad - lag(actividad, default = 0),
-    exito_bin = exito - lag(exito, default = 0)
+
+mean_baseline <- baseline %>% 
+  summarise(
+    actividad_m = mean(actividad_basal),
+    evento_m = mean(evento_basal)
   )
+
+p5 <- reward_comparison %>% 
+  ggplot(aes(tipo_recompensa, m,
+             ymin = m - s, ymax = m + s,
+             fill = tipo_recompensa, color = tipo_recompensa)) +
+  geom_col(width = 0.5) +
+  geom_errorbar(width = 0.3) +
+  scale_fill_manual(values = c("black", "#56B4E9")) +
+  scale_color_manual(values = c("black", "#56B4E9")) +
+  scale_x_discrete(labels = c("Non-random", "Random")) +
+  geom_hline(yintercept = mean_baseline$actividad_m, color = "gray") +
+  geom_text(aes(2.45,mean_baseline$actividad_m,label = "E(Licks)", vjust = -1)) +
+  theme_pubr() +
+  xlab("") +
+  ylab("Total number of licks") +
+  theme(
+    legend.position = "none"
+  ) +
+  geom_signif(
+    y_position = c(750), xmin = c(0.8), xmax = c(2.2),
+    annotation = c("**"), tip_length = 0
+  )
+ggsave("../images/extra4.png", p5, width = 6, height = 4)
+
+# add baseline
+df <- objective_2_data
+
 # summary per ID per date
 df_summ <- df %>% 
   group_by(
@@ -155,8 +378,8 @@ df_summ <- df %>%
   ungroup() %>% 
   left_join(baseline, by = c("ID")) %>% 
   mutate(
-    evento_delta = evento_summ - evento_basal,
-    actividad_delta = actividad_summ - actividad_basal
+    evento_delta = ((evento_summ - evento_basal) / evento_basal) * 100,
+    actividad_delta = ((actividad_summ - actividad_basal) / actividad_basal) * 100
   )
 
 # mean differences
@@ -173,16 +396,13 @@ df_summ_m <- df_summ %>%
   ) %>% 
   ungroup()
 
-df_summ %>% 
-  group_by(tipo_recompensa, exp_group, exp_phase) %>% 
-  summarise(m = mean(actividad_delta))
-  
-  
-df_summ %>% 
+df_overall_m <- df_summ_m %>% 
   filter(exp_phase == "experimental", exp_group == "experimental") %>% 
-  ggplot(aes(tipo_recompensa, actividad_delta)) +
-  geom_boxplot()
-
+  group_by(tipo_recompensa, exp_group, exp_phase) %>% 
+  summarise(
+    m = mean(actividad_delta_m),
+    s = sd(actividad_delta_m) / sqrt(n())
+    )
 ```
 
 # stats pool 1
@@ -300,7 +520,10 @@ data_mdl_1_m %>%
 
 # bins
 ```{r}
-data_bins <- data_pool1 %>%
+data_bins <- objective_2_data %>%
+  group_by(n_sesion) %>% 
+  mutate(tiempo = tiempo - tiempo[1]) %>% 
+  ungroup() %>% 
     group_by(
       ID,
       n_sesion
@@ -310,47 +533,180 @@ data_bins <- data_pool1 %>%
       # bins are calculated based on the 
       # length of the session
       bins = cut(
-        msFromStart_corr,
-        breaks = seq(0, 60 * 60 * 1e3, by = 1 * 60 * 1e3),
+        tiempo,
+        breaks = seq(0, 60 * 60 * 1e3, by = 10 * 60 * 1e3),
         labels = FALSE,
         include.lowest = TRUE))
 
 bin_baseline <- data_bins %>% 
-  filter(exp_phase == "BASAL") %>% 
-  group_by(ID, bins, n_sesion) %>% 
+  filter(n_sesion <= 12, n_sesion >= 7) %>% 
+  group_by(ID, bins, n_sesion, pool) %>% 
   summarise(
     basal_bin_licks = n()
   ) %>% 
   ungroup() %>% 
-  group_by(ID, bins) %>% 
+  group_by(ID, bins, pool) %>% 
   summarise(
     basal_licks = mean(basal_bin_licks)
   ) %>% 
   drop_na()
 
 data_bins_baseline <- data_bins %>% 
-  mutate(event_uncum = if_else(eventsCum - lag(eventsCum) > 0, 1, 0)) %>% 
-  group_by(ID, n_sesion, exp_group, exp_phase, bins) %>% 
+  group_by(ID, n_sesion, exp_group, exp_phase, bins, pool) %>% 
   summarise(
-    licks = n(),
-    events = sum(event_uncum, na.rm = TRUE)
-  ) %>% 
+    licks = n()
+    ) %>% 
   left_join(bin_baseline) %>% 
   mutate(
-    delta_licks = licks - basal_licks
+    delta_licks = ((licks - basal_licks) / basal_licks) * 100
   )
 
+bins_mdl <- lmer(
+  data = data_bins_baseline %>% filter(exp_phase == "experimental"),
+  delta_licks ~ exp_group * bins + n_sesion + (1 | ID) + (1 | pool)
+)
+summary(bins_mdl)
+
+bins_mdl_data <- plot_model(bins_mdl, type = "pred",  terms = c("bins", "exp_group"))$data %>% as_tibble()
+
+p6 <- bins_mdl_data %>% 
+  mutate(group = if_else(group == "control", "Control", "Uncertainty")) %>% 
+  ggplot(aes(
+    x, predicted, color = group, fill = group
+  )) +
+  geom_ribbon(aes(
+    ymin = conf.low,
+    ymax = conf.high
+  ), alpha = 0.1) +
+  geom_line() +
+  scale_color_manual(values = c("black", "#56B4E9")) +
+  scale_fill_manual(values = c("black", "#56B4E9")) +
+  ylab("%Δ number of licks") +
+  xlab("10 minute bins") +
+  scale_x_continuous(breaks=seq(0, 6, 1)) +
+  labs(fill = "", color = "") + 
+  theme_pubr()
+ggsave("../images/extra5.png", p6, width = 6, height = 4)
+
+plot_model(bins_mdl, type = "pred",  terms = c("bins", "exp_group")) +
+  theme_pubr() +
+  theme(legend.position = "right", legend.title = element_blank()) +
+  scale_color_manual(labels = c("Control", "Uncertainty"), values = c("blue", "red")) +
+  ggtitle("") +
+  ylab("Model number of licks estimates") +
+  xlab("Session time (m)")
+
 # burst
-data_burst <- data_pool1 %>% 
-  rename(
-    timestamp = msFromStart_corr,
-    sensor = spoutNumber,
-    tipo_recompensa = is_random,
-    group = exp_group
-  ) %>% 
-  mutate(pool = "pool_1", interval = msFromStart - lag(msFromStart))
+data_burst <- objective_2_data %>% 
+  group_by(n_sesion) %>% 
+  mutate(interval = tiempo - lag(tiempo), timestamp = tiempo - lag(tiempo), group = exp_group) %>% 
+  ungroup()
 
 burst <- burst_analysis(data_burst, 500)
+
+size_mdl_data <- burst %>% 
+  filter(values == "in_cluster", cluster_length < 100) %>% 
+  mutate(exp_phase = if_else(n_sesion > 12, "experimental", "baseline")) %>% 
+  group_by(ID, n_sesion, exp_phase, group, pool) %>% 
+  summarise(cluster_length_ = mean(cluster_length)) %>% 
+  drop_na()
+
+size_baseline <- size_mdl_data %>%
+  filter(n_sesion <= 12, n_sesion >= 7) %>% 
+  group_by(
+    ID,
+    n_sesion
+  ) %>% 
+  summarise(size_basal = mean(cluster_length_)) %>% 
+  ungroup() %>% 
+  group_by(ID) %>% 
+  summarise(s_basal = mean(size_basal))
+
+burst_mdl_data <- burst %>% 
+  filter(values == "in_cluster") %>% 
+  mutate(exp_phase = if_else(n_sesion > 12, "experimental", "baseline")) %>% 
+  group_by(
+    ID,
+    pool,
+    n_sesion,
+    group,
+    exp_phase
+  ) %>% 
+  summarise(
+    n_cluster = n()
+  )
+
+burst_baseline <- burst_mdl_data %>%
+  filter(n_sesion <= 12, n_sesion >= 7) %>% 
+  group_by(
+    ID,
+    n_sesion
+  ) %>% 
+  summarise(burst_basal = mean(n_cluster)) %>% 
+  ungroup() %>% 
+  group_by(ID) %>% 
+  summarise(b_basal = mean(burst_basal))
+
+burst_mdl_data <- burst_mdl_data %>% 
+  left_join(burst_baseline, by = c("ID"))
+
+size_mdl_data <- size_mdl_data %>% 
+  left_join(size_baseline, by = c("ID"))
+
+burst_mdl <- lmer(
+  data = burst_mdl_data,
+  n_cluster ~ group * exp_phase + b_basal + (1 | ID) + (1 | pool)
+)
+summary(burst_mdl)
+
+size_mdl <- lmer(
+  data = size_mdl_data,
+  cluster_length_ ~ group * exp_phase + s_basal + (1 | ID/pool)
+)
+summary(size_mdl)
+
+burst_df <- plot_model(burst_mdl, type = "int")$data %>% as_tibble()
+size_df <- plot_model(size_mdl, type = "int")$data %>% as_tibble()
+
+p7 <- burst_df %>% 
+  mutate(x = if_else(x == 1, "Basal", "Uncertainty")) %>% 
+    ggplot(aes(group, predicted, fill = x, color = x)) +
+    geom_col(position = "dodge2") +
+    geom_errorbar(aes(
+      ymin = conf.low, ymax = conf.high
+    ), position = position_dodge(0.9), width = 0.3) +
+    scale_fill_manual(values = c("black", "#56B4E9")) +
+    scale_color_manual(values = c("black", "#56B4E9")) +
+    theme_pubr() +
+    ylab("Number of bursts (500 ms) estimates") +
+    xlab("") +
+    scale_x_discrete(labels = c("Control", "Uncertainty")) +
+    labs(fill = "Experimental phase", color = "Experimental phase") + 
+    geom_signif(
+      y_position = c(150, 150), xmin = c(0.8, 1.8), xmax = c(1.2, 2.2),
+      annotation = c("NS", "**"), tip_length = 0
+    )
+ggsave("../images/extra6.png", p7, width = 6, height = 4)
+
+p8 <- size_df %>% 
+  mutate(x = if_else(x == 1, "Basal", "Uncertainty")) %>% 
+    ggplot(aes(group, predicted, fill = x, color = x)) +
+    geom_col(position = "dodge2") +
+    geom_errorbar(aes(
+      ymin = conf.low, ymax = conf.high
+    ), position = position_dodge(0.9), width = 0.3) +
+    scale_fill_manual(values = c("black", "#56B4E9")) +
+    scale_color_manual(values = c("black", "#56B4E9")) +
+    theme_pubr() +
+    ylab("Length of bursts (500 ms) estimates") +
+    xlab("") +
+    scale_x_discrete(labels = c("Control", "Uncertainty")) +
+    labs(fill = "Experimental phase", color = "Experimental phase") + 
+    geom_signif(
+      y_position = c(12, 12), xmin = c(0.8, 1.8), xmax = c(1.2, 2.2),
+      annotation = c("NS", "**"), tip_length = 0
+    )
+ggsave("../images/extra7.png", p8, width = 6, height = 4)
 
 # number of clusters
 burst_size <- burst %>% 
