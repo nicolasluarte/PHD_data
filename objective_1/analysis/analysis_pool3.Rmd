@@ -104,7 +104,8 @@ weight_data_m <- weight_data %>%
 
 ```{r}
 # daily intake data
-intake_data_daily <- intake_data$daily_intake %>% bind_rows()
+intake_data_daily <- intake_data$daily_intake %>% bind_rows() %>% 
+  mutate(exp_group = if_else(ID %in% c(416, 413, 418, 417, 419), "uncertainty", "control"))
 # daily intake data means
 intake_data_m <- intake_data_daily %>% 
   ungroup() %>% 
@@ -172,23 +173,25 @@ weight_data %>%
 # intake plot
 
 intake_data_daily %>% 
-  filter(date < "2022-10-03") %>% 
-  ggplot(aes(date, pellets, color = ID)) +
+  filter(date < "2022-10-07", pellets != 1) %>% 
+  ggplot(aes(date, pellets, color = interaction(ID, exp_group))) +
   geom_line() +
   geom_point() +
   geom_line(
-    data = intake_data_m %>% filter(date < "2022-10-03"),
+    data = intake_data_m %>% filter(date < "2022-10-07"),
     color = "black"
   ) +
   geom_errorbar(
-    data = intake_data_m %>% filter(date < "2022-10-03"),
+    data = intake_data_m %>% filter(date < "2022-10-07"),
     color = "black",
     aes(ymin = pellets - e, ymax = pellets + e)
   ) +
   geom_point(
-    data = intake_data_m %>% filter(date < "2022-10-03"),
+    data = intake_data_m %>% filter(date < "2022-10-07"),
     color = "black"
   ) +
+  geom_vline(xintercept = as.numeric(as.Date("2022-10-04"))) +
+  facet_wrap(~exp_group) +
   theme_pubr()
 ```
 
