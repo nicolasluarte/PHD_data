@@ -167,7 +167,7 @@ weight_data %>%
   geom_errorbar(data = weight_data_m,
                 aes(ymin = weight - e, ymax = weight + e),
                 color = "black") +
-  geom_vline(xintercept = as.numeric(as.Date("2022-09-26"))) +
+  geom_vline(xintercept = as.numeric(as.Date("2022-10-10"))) +
   theme_pubr()
 
 # intake plot
@@ -178,16 +178,16 @@ intake_data_daily %>%
   geom_line() +
   geom_point() +
   geom_line(
-    data = intake_data_m %>% filter(date < "2022-10-07"),
+    data = intake_data_m %>% filter(date < "2022-10-10"),
     color = "black"
   ) +
   geom_errorbar(
-    data = intake_data_m %>% filter(date < "2022-10-07"),
+    data = intake_data_m %>% filter(date < "2022-10-10"),
     color = "black",
     aes(ymin = pellets - e, ymax = pellets + e)
   ) +
   geom_point(
-    data = intake_data_m %>% filter(date < "2022-10-07"),
+    data = intake_data_m %>% filter(date < "2022-10-10"),
     color = "black"
   ) +
   geom_vline(xintercept = as.numeric(as.Date("2022-10-04"))) +
