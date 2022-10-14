@@ -15,7 +15,9 @@ knitr::opts_chunk$set(echo = TRUE)
 pacman::p_load(
   tidyverse,
   ggplot2,
-  ggpubr
+  ggpubr,
+  lme4,
+  lmerTest
 )
 ```
 
@@ -32,7 +34,8 @@ weight_data <- read_csv("https://raw.githubusercontent.com/nicolasluarte/PHD_dat
   mutate(
     ID = as.factor(ID),
     date = lubridate::ymd(date),
-    weight = as.numeric(weight)
+    weight = as.numeric(weight),
+    exp_group = if_else(ID %in% c(416, 413, 418, 417, 419), "uncertainty", "control")
   )
 
 # fed data
@@ -49,149 +52,61 @@ intake_data <- read_csv(intake_files) %>%
   ) %>% 
   filter(time >= "2022-09-26 00:00:00") %>% 
   rename(ID = animal) %>%
+  mutate(
+    exp_group = if_else(ID %in% c(416, 413, 418, 417, 419), "uncertainty", "control")
+  ) %>% 
   group_by(ID) %>% 
   group_nest(., keep = TRUE, .key = "intake_raw")
 ```
 
-# Intake data analysis
 
+# preliminar plots
 ```{r}
-intake_data <- intake_data %>% 
-  mutate(
-    # add daily intake summary data
-    daily_intake = map(intake_raw, function(df){
-      df %>% 
-        group_by(date, ID) %>% 
-        summarise(
-          pellets = n()
-        ) %>% 
-        ungroup()
-    }),
-    # add hourly intake summary data
-    hourly_intake = map(intake_raw, function(df){
-      df %>% 
-        group_by(lubridate::hour(time), ID) %>% 
-        summarise(
-          pellets = n()
-        ) %>% 
-        ungroup()
-    }),
-    # add intake lag
-    intake_lag = map(intake_raw, function(df){
-      df %>% 
-      group_by(date, ID) %>% 
-        mutate(
-          intake_lag = replace_na(as.numeric(time - lag(time)), 0) - delay
-        ) %>% 
-        ungroup()
-    })
-  )
-```
-
-# weight data analysis
-```{r}
-weight_data_m <- weight_data %>% 
-  group_by(date) %>% 
+# daily intake
+intake_daily <- intake_data %>% 
+  unnest() %>% 
+  filter(date < "2022-10-14") %>% 
+  group_by(date, exp_group, ID) %>% 
   summarise(
-    weight_ = mean(weight),
-    e = sd(weight) / sqrt(n())
+    m = n()
   ) %>% 
-  rename(weight = weight_) %>% 
-  mutate(ID = "Mean weight")
-```
-
-# Data merge
-
-```{r}
-# daily intake data
-intake_data_daily <- intake_data$daily_intake %>% bind_rows() %>% 
-  mutate(exp_group = if_else(ID %in% c(416, 413, 418, 417, 419), "uncertainty", "control"))
-# daily intake data means
-intake_data_m <- intake_data_daily %>% 
   ungroup() %>% 
-  group_by(date) %>% 
-  summarise(
-    pellets_ = mean(pellets),
-    e = sd(pellets) / sqrt(n())
-  ) %>% 
-  rename(pellets = pellets_)
-weight_intake <- intake_data_daily %>% 
-  complete(., date, ID, fill = list(pellets = 1)) %>% 
-  left_join(weight_data, by = c("date", "ID")) %>% 
   group_by(ID) %>% 
   mutate(
-    weight_intrp = zoo::na.approx(weight, na.rm = FALSE)
-  )
+    mean_intake = as.integer(mean(m)),
+    m = if_else(m < 10, mean_intake, m),
+    exp_phase = if_else(date >= "2022-10-04", "experimental", "baseline")
+    )
+  
+  
+# daily intake plot
+intake_daily %>% 
+  ggplot(aes(
+    date, m, color = interaction(exp_group), group = interaction(exp_group, ID)
+  )) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.3) +
+  geom_vline(xintercept = as.Date("2022-10-04")) +
+  stat_summary(aes(group=exp_group, color = exp_group), fun=mean, geom="line", size = 0.7) +
+  stat_summary(aes(group=exp_group, color = exp_group), fun.data = mean_se, geom = "errorbar", size = 0.7) +
+  scale_y_continuous(breaks = seq(20, 100, 10)) +
+  theme_pubr()
 
-pellets_gr <- weight_intake %>% 
-  mutate(pellets_gr = pellets / weight_intrp)
-```
-
-# group assig
-
-```{r}
-intake_m <- intake_data_daily %>% 
-  group_by(ID) %>% 
-  summarise(i = mean(pellets))
-weight_m <- weight_data %>% 
-  group_by(ID) %>% 
-  summarise(w = mean(weight))
-assig <- left_join(intake_m, weight_m) %>% 
-  arrange(desc(i))
-trt <- c(416, 413, 418, 417, 419)
-assig <- assig %>% 
-  mutate(exp_group = if_else(ID %in% trt, "experimental", "control")) %>% 
-  arrange(ID)
-# test for diffs
-# intake
-summary(lm(data = assig, i ~ exp_group))
-# weight
-summary(lm(data = assig, w ~ exp_group))
-```
-
-# Plots
-
-```{r}
-# weight plot
-
+# weigh plot
 weight_data %>% 
   ggplot(aes(
-    date,
-    weight,
-    color = ID
+    date, weight, group = interaction(exp_group, ID), color = exp_group
   )) +
-  geom_line() +
-  geom_point() +
-  geom_line(data = weight_data_m, color = "black") +
-  geom_point(data = weight_data_m, color = "black") +
-  geom_errorbar(data = weight_data_m,
-                aes(ymin = weight - e, ymax = weight + e),
-                color = "black") +
-  geom_vline(xintercept = as.numeric(as.Date("2022-10-10"))) +
+  geom_line(alpha = 0.3) +
+  geom_point(alpha = 0.3) +
+  geom_vline(xintercept = as.Date("2022-10-04")) +
+  stat_summary(aes(group=exp_group, color = exp_group), fun=mean, geom="line", size = 0.7) +
+  stat_summary(aes(group=exp_group, color = exp_group), fun.data = mean_se, geom = "errorbar", size = 0.7) +
   theme_pubr()
 
-# intake plot
-
-intake_data_daily %>% 
-  filter(date < "2022-10-07", pellets != 1) %>% 
-  ggplot(aes(date, pellets, color = interaction(ID, exp_group))) +
-  geom_line() +
-  geom_point() +
-  geom_line(
-    data = intake_data_m %>% filter(date < "2022-10-10"),
-    color = "black"
-  ) +
-  geom_errorbar(
-    data = intake_data_m %>% filter(date < "2022-10-10"),
-    color = "black",
-    aes(ymin = pellets - e, ymax = pellets + e)
-  ) +
-  geom_point(
-    data = intake_data_m %>% filter(date < "2022-10-10"),
-    color = "black"
-  ) +
-  geom_vline(xintercept = as.numeric(as.Date("2022-10-04"))) +
-  facet_wrap(~exp_group) +
-  theme_pubr()
+summary(
+  lmer(m ~ exp_group + (1 | ID), data = intake_daily %>%  filter(exp_phase == "experimental"))
+)
 ```
+
 
