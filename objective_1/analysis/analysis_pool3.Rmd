@@ -29,7 +29,7 @@ pacman::p_load(
 
 # Import data
 
-```{r}
+```{r, echo = FALSE}
 # weights
 weight_data <- read_csv("https://raw.githubusercontent.com/nicolasluarte/PHD_data/main/objective_1/data/raw/weights/weights_pool3.csv") %>% 
   mutate(
@@ -62,7 +62,7 @@ intake_data <- read_csv(intake_files) %>%
 
 
 # preliminar plots
-```{r}
+```{r, echo = FALSE}
 # daily intake
 intake_daily <- intake_data %>% 
   unnest() %>% 
@@ -112,7 +112,7 @@ summary(
 
 # Retrieval analysis
 
-```{r}
+```{r, echo = FALSE}
 test_data <- intake_data %>% 
   select(intake_raw) %>% 
   unnest(intake_raw) %>% 
