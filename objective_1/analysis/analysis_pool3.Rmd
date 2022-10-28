@@ -62,7 +62,7 @@ intake_data <- read_csv(intake_files) %>%
 
 
 # preliminar plots
-```{r, echo = FALSE}
+```{r, echo = FALSE,  fig.show='hide'}
 # daily intake
 intake_daily <- intake_data %>% 
   unnest() %>% 
