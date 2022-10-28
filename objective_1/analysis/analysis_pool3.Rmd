@@ -17,7 +17,8 @@ pacman::p_load(
   ggplot2,
   ggpubr,
   lme4,
-  lmerTest
+  lmerTest,
+  cumstats
 )
 ```
 
@@ -65,7 +66,7 @@ intake_data <- read_csv(intake_files) %>%
 # daily intake
 intake_daily <- intake_data %>% 
   unnest() %>% 
-  filter(date < "2022-10-14") %>% 
+#  filter(date < "2022-10-14") %>% 
   group_by(date, exp_group, ID) %>% 
   summarise(
     m = n()
@@ -74,7 +75,7 @@ intake_daily <- intake_data %>%
   group_by(ID) %>% 
   mutate(
     mean_intake = as.integer(mean(m)),
-    m = if_else(m < 10, mean_intake, m),
+   # m = if_else(m < 10, mean_intake, m),
     exp_phase = if_else(date >= "2022-10-04", "experimental", "baseline")
     )
   
@@ -89,7 +90,7 @@ intake_daily %>%
   geom_vline(xintercept = as.Date("2022-10-04")) +
   stat_summary(aes(group=exp_group, color = exp_group), fun=mean, geom="line", size = 0.7) +
   stat_summary(aes(group=exp_group, color = exp_group), fun.data = mean_se, geom = "errorbar", size = 0.7) +
-  scale_y_continuous(breaks = seq(20, 100, 10)) +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
   theme_pubr()
 
 # weigh plot
@@ -109,4 +110,108 @@ summary(
 )
 ```
 
+# Retrieval analysis
+
+```{r}
+test_data <- intake_data %>% 
+  select(intake_raw) %>% 
+  unnest(intake_raw) %>% 
+  # fix error in m = 416
+  mutate(delay = if_else(delay == 130, 180, delay)) %>% 
+  filter(delay <= 300 & delay != 1)
+
+# first we need to split data into days
+s1 <- test_data %>% 
+  mutate(date = lubridate::as_date(time))
+
+# we remove the first pellet from each day as retrieval time comes form a not being able to eat
+s2 <- s1 %>% 
+  group_by(date, ID) %>% 
+  slice(-1)
+
+# we further divide into 1-h blocks
+s3 <- s2 %>% 
+  ungroup() %>% 
+  mutate(hour_block = lubridate::hour(time))
+
+# for each block we compute retrieval: time difference - delay
+s4 <- s3 %>% 
+  group_by(ID, hour_block) %>% 
+  mutate(retrieval = (time - lag(time)) - delay) %>% 
+  # negative retrieval comes from task resets
+  filter(retrieval > 0) %>% 
+  # NA are the first from each block so no real 'retrieval' time
+  drop_na() %>% 
+  ungroup()
+
+# to consider 'task disengagement' we plot retrieval distributions
+s4 %>%
+  ggplot(aes(retrieval)) +
+  geom_histogram() +
+  facet_wrap(~ID)
+
+# 90th percentile
+s4 %>% 
+  ggplot(aes(retrieval)) +
+  stat_ecdf(geom = "step") +
+  facet_wrap(~ID)
+
+s4 %>% 
+  group_by(ID) %>% 
+  filter(date >= "2022-10-04") %>% 
+  summarise(xx = quantile(ecdf(retrieval),0.75))
+
+s4 %>%
+  filter(retrieval < 1500) %>% 
+  ggplot(aes(retrieval)) +
+  geom_histogram() +
+  facet_wrap(~ID)
+
+s4 %>%
+  filter(retrieval < 1500) %>% 
+  ggplot(aes(as.factor(delay), retrieval)) +
+  geom_boxplot() +
+  facet_wrap(~ ID)
+
+
+# baseline retrieval distributions
+s4 %>%
+  mutate(date = lubridate::date(time)) %>% 
+  filter(retrieval < 1500, date < "2022-10-04") %>% 
+  ggplot(aes(retrieval)) +
+  geom_histogram() +
+  facet_wrap(~ID)
+
+# take the log of the distribution to get a better point estimate
+# I think this is clearly a bi-modal distribution
+# leave this for now, but think gaussian mixture models
+s4 %>%
+  mutate(date = lubridate::date(time)) %>% 
+  filter(retrieval < 1500, date < "2022-10-04") %>% 
+  ggplot(aes(log(as.numeric(retrieval)))) +
+  geom_histogram() +
+  facet_wrap(~ID)
+
+# take the mean of the log basal distribution
+basal_retrieval <- s4 %>% 
+  mutate(date = lubridate::date(time)) %>% 
+  filter(retrieval < 1500, date < "2022-10-04") %>% 
+  group_by(ID) %>% 
+  summarise(m = mean(log(as.numeric(retrieval))), s = sd(log(as.numeric(retrieval))) / n())
+
+# merge into dataset
+s5 <- s4 %>% 
+  left_join(basal_retrieval, by = c("ID")) %>% 
+  mutate(
+    log_retrieval = log(as.numeric(retrieval)),
+    log_delay = log(delay)
+  )
+
+s5 %>%
+  filter(retrieval < 1500, date >= "2022-10-04") %>% 
+  ggplot(aes(as.factor(delay), log_retrieval)) +
+  geom_boxplot() +
+  geom_violin() +
+  facet_wrap(~ ID)
+```
 

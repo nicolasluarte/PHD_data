@@ -926,7 +926,7 @@ p3 <- p3 +
 plot_grid(p1, p2, p3, labels = c('A', 'B', 'C'), label_size = 12)
 ```
 
-# POOL 2
+q# POOL 2
 
 ```{r}
 data_pool2 <- load_experiment(
