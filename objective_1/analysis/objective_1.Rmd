@@ -1,5 +1,5 @@
 # Imports
-```{r libs}
+```{r libs, echo=FALSE}
 pacman::p_load(
   ggplot2,
   tidyverse,
@@ -9,7 +9,7 @@ pacman::p_load(
 )
 ```
 
-```{r, intake-data-import}
+```{r, intake-data-import, echo=FALSE}
 intake_files <- list.files(path = "../data/raw/intake",
                           pattern = "^4", # change this to import all animals
                           recursive = TRUE,
@@ -24,7 +24,7 @@ intake_data <- read_csv(intake_files) %>%
   rename(ID = animal)
 ```
 
-```{r data-preproc}
+```{r data-preproc, echo=FALSE}
 intake_data <- intake_data %>% 
   mutate(
     across(pellets:delay, as.numeric),
@@ -41,7 +41,7 @@ intake_data <- intake_data %>%
 
 ## Intake
 
-```{r summary-tables-plots}
+```{r summary-tables-plots, echo=FALSE}
 #                         #
 # weekly intake per mice  #
 #                         #
@@ -85,7 +85,7 @@ p_weekly_intake
 
 ## Delay
 
-```{r retrieval-time}
+```{r retrieval-time, echo=FALSE}
 #                           #
 # retrieval times per mice  #
 #                           #
