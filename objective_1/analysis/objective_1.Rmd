@@ -1,0 +1,213 @@
+# Imports
+```{r libs}
+pacman::p_load(
+  ggplot2,
+  tidyverse,
+  viridis,
+  ggpubr,
+  mixtools
+)
+```
+
+```{r, intake-data-import}
+intake_files <- list.files(path = "../data/raw/intake",
+                          pattern = "^4", # change this to import all animals
+                          recursive = TRUE,
+                          full.names = TRUE)
+intake_data <- read_csv(intake_files) %>% 
+  mutate(
+    time = lubridate::as_datetime(time),
+    date = lubridate::date(time),
+    animal = as.factor(animal)
+  ) %>% 
+  filter(time >= "2022-09-26 00:00:00") %>% 
+  rename(ID = animal)
+```
+
+```{r data-preproc}
+intake_data <- intake_data %>% 
+  mutate(
+    across(pellets:delay, as.numeric),
+    week = as.numeric(as.factor(lubridate::week(date))), # add weeks relative to experiment start
+    group = if_else(ID %in% c(413, 416, 417, 418, 419), "uncertainty", "no-uncertainty") # experimental groups
+  ) %>% 
+  filter(
+    date >= "2022-01-01", # exclude test data
+    delay != 1 # delays equals to 1 are test pellets
+  )
+```
+
+# Summary tables
+
+## Intake
+
+```{r summary-tables-plots}
+#                         #
+# weekly intake per mice  #
+#                         #
+
+# get daily intake per mice
+daily_intake <- intake_data %>% 
+  group_by(
+    ID, date, week, group
+  ) %>% 
+  summarise(
+    intake = n()
+  ) %>% 
+  filter(intake > 30) %>% 
+  ungroup()
+
+# get mean weekly intake per mice
+weekly_intake <- daily_intake %>% 
+  group_by(
+    ID, week, group
+  ) %>% 
+  summarise(
+    m = mean(intake),
+    e = sd(intake) / n()
+  )
+
+p_weekly_intake <- weekly_intake %>% 
+  ggplot(aes(
+    week, m, color = group, group = ID
+  )) +
+  geom_point(alpha = 0.2) +
+  geom_line(alpha = 0.2) +
+  stat_summary(aes(group=group), fun=mean, geom="line") +
+  stat_summary(aes(group=group, width = 0.2),fun.data = mean_se, geom = "errorbar") +
+  scale_color_viridis(discrete=TRUE) +
+  scale_x_continuous(breaks = seq(1:max(weekly_intake$week))) +
+  theme_pubr() +
+  ylab("Mean number of pellets") +
+  xlab("Weeks")
+p_weekly_intake
+```
+
+## Delay
+
+```{r retrieval-time}
+#                           #
+# retrieval times per mice  #
+#                           #
+
+delay_data <- intake_data %>% 
+  filter(group == "uncertainty") %>% 
+  mutate(hour = lubridate::hour(time)) %>% 
+  group_by(ID, hour) %>% 
+  slice(-1) %>% # remove first removal, corresponds to previous block
+  mutate(
+    ret = (time - lag(time)) - delay
+  ) %>% 
+  filter(ret > 0, ret < 3600, delay %in% c(15, 60, 120, 180, 240, 300)) %>%  # this are sensor probes without pellet actually being there, max ret is 1 hour by definition
+  mutate(ret = as.numeric(ret)) %>% 
+  ungroup() %>% 
+  group_by(ID) %>% 
+  mutate(z_ret = scale(ret))
+
+raw_ret <- delay_data %>% 
+  ggplot(aes(delay, ret)) +
+  geom_point() +
+  scale_x_continuous(breaks = c(15, 60, 120, 180, 240, 300)) +
+  geom_smooth(method="lm")
+raw_ret
+
+z_ret <- delay_data %>% 
+  ggplot(aes(delay, z_ret)) +
+  geom_point() +
+  scale_x_continuous(breaks = c(15, 60, 120, 180, 240, 300)) +
+  geom_smooth(method="lm")
+z_ret
+
+# get 15 sec delay retrieval during the first week
+baseline_ret <- delay_data %>% 
+  filter(week == 1, delay == 15)
+  
+baseline_ret %>% 
+  ggplot(aes(ret)) +
+  geom_histogram()
+
+baseline_ret %>% 
+  ggplot(aes(log(ret))) +
+  geom_histogram()
+ 
+
+# data is skewed, to measure spread use 1st and 3rd quartile
+q <- c(0.25, 0.5, 0.75)
+baseline_ret_q <- baseline_ret %>% 
+  group_by(ID) %>% 
+  summarise(
+    q25 = quantile(ret, q[1]),
+    q50 = quantile(ret, q[2]),
+    q75 = quantile(ret, q[3])
+  ) %>% 
+  pivot_longer(cols = q25:q75, names_to = "var", values_to = "val") %>% 
+  ungroup() %>% 
+  group_by(var) %>% 
+  summarise(
+    m = mean(val),
+    e = sd(val)/n()
+  )
+
+baseline_ret_q_i <- baseline_ret %>% 
+  group_by(ID) %>% 
+  summarise(
+    q25 = quantile(ret, q[1]),
+    q50 = quantile(ret, q[2]),
+    q75 = quantile(ret, q[3])
+  ) %>% 
+  pivot_longer(cols = q25:q75, names_to = "var", values_to = "val")
+
+delay_data %>% 
+  filter(week >= 2) %>% 
+  ggplot(aes(as.factor(delay), ret)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.1) +
+  coord_cartesian(ylim = quantile(delay_data$ret, c(0.1, 0.9))) +
+  geom_hline(yintercept = baseline_ret_q[baseline_ret_q$var == "q25",]$m, color = "blue") +
+  geom_hline(yintercept = baseline_ret_q[baseline_ret_q$var == "q50",]$m, color = "yellow") +
+  geom_hline(yintercept = baseline_ret_q[baseline_ret_q$var == "q75",]$m, color = "red")
+
+delay_data %>% 
+  filter(week >= 2) %>% 
+  ggplot(aes(delay, ret)) +
+  geom_quantile(colour = "purple", size = 1, alpha = 0.5, quantiles = c(0.25, 0.5, 0.75)) +
+  geom_hline(aes(yintercept = val, color = var), inherit.aes = FALSE, data = baseline_ret_q_i) +
+  facet_wrap(~ID)
+
+delay_data %>% 
+  filter(week >= 2) %>% 
+  ggplot(aes(as.factor(delay), ret)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.1) +
+  coord_cartesian(ylim = quantile(delay_data$ret, c(0.1, 0.9))) +
+  geom_hline(yintercept = baseline_ret_q[baseline_ret_q$var == "q25",]$m, color = "blue") +
+  geom_hline(yintercept = baseline_ret_q[baseline_ret_q$var == "q50",]$m, color = "yellow") +
+  geom_hline(yintercept = baseline_ret_q[baseline_ret_q$var == "q75",]$m, color = "red") +
+  facet_wrap(~ID)
+
+# mix model
+mixmdl <- normalmixEM(log(delay_data$ret), k = 2)
+
+mixmdl <- delay_data %>% 
+  filter(week >= 2) %>% 
+  mutate(log_ret = log(ret)) %>% 
+  group_by(ID, delay) %>% 
+  group_split() %>% 
+  map_dfr(., function(x){
+    r <- normalmixEM(x$log_ret, k = 2)
+    t <- tibble(ID = x$ID[1], delay = x$delay[1], lab = c("A", "B"), mu = c(r$mu[1], r$mu[2]), sigma = c(r$sigma[1], r$sigma[2]))
+    return(t)
+  })
+
+mixmdl %>% 
+  mutate(m = exp(mu), s = exp(sigma)) %>% 
+  ggplot(aes(
+    delay, mu, color = lab, ymin = mu - sigma, ymax = mu + sigma
+  )) +
+  geom_point() +
+  geom_errorbar() +
+  geom_line() +
+  facet_grid(lab~ID, scales = "free")
+```
+
+
