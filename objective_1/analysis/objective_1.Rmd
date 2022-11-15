@@ -5,7 +5,10 @@ pacman::p_load(
   tidyverse,
   viridis,
   ggpubr,
-  mixtools
+  mixtools,
+  lme4,
+  lmerTest,
+  ggsignif
 )
 ```
 
@@ -37,7 +40,7 @@ intake_data <- intake_data %>%
   )
 ```
 
-# Summary tables
+# ONGOING
 
 ## Intake
 
@@ -210,4 +213,406 @@ mixmdl %>%
   facet_grid(lab~ID, scales = "free")
 ```
 
+# FINISHED
+
+## Weight
+
+```{r}
+# import raw data
+w <- readRDS('../data/raw/weights.rds') %>% 
+  # add groups
+  mutate(
+      group = case_when(
+      animal %in% c(320, 323, 325, 326) ~ "experimental_high_unc",
+      animal %in% c(234, 235, 236, 245, 265) ~ "experimental_low_unc",
+      TRUE ~ "control"
+      )
+  ) %>% 
+  filter(animal != 246) # animal was euthanized
+
+# individual means
+
+w_ <- w %>% 
+  group_by(
+    group,
+    animal
+  ) %>% 
+  summarise(
+    m = mean(weight),
+    e = sd(weight) / sqrt(n())
+  ) %>% 
+  ungroup()
+
+# group means
+
+w__ <- w_ %>% 
+  group_by(
+    group
+  ) %>% 
+  summarise(
+    m_ = mean(m),
+    e_ = sd(m) / sqrt(n())
+  ) %>% 
+  ungroup()
+
+# statistical test
+
+w_s <- lmer(
+  data = w,
+  weight ~ 1 + group + (1 | animal)
+)
+w_s_emm <- emmeans::emmeans(w_s, specs = pairwise ~ group)
+summary(w_s)
+  
+
+```
+
+
+## Intake
+
+```{r}
+# import raw data
+fed_high_uncertainty <- readRDS("../data/raw/high_uncertainty.rds")
+fed_low_uncertainty <- readRDS("../data/raw/low_uncertainty.rds")
+
+# merge both fed data sets
+i <- bind_rows(
+  fed_high_uncertainty,
+  fed_low_uncertainty
+) %>% 
+# add session numbers
+group_by(animal) %>% 
+mutate(session = as.numeric(as.factor(ymd))) %>% 
+ungroup() %>% 
+# animal was euthanized
+# sessions greater than 35 are fed maintenance and test
+filter(session <= 35, animal != 246) %>% 
+# group both controls together
+mutate(
+    group = case_when(
+      protocol == "control" ~ "control",
+      protocol == "experimental" &
+        experiment_id == "high_uncertainty_fed" ~ "experimental_high_unc",
+      protocol == "experimental" &
+        experiment_id == "low_uncertainty_fed" ~ "experimental_low_unc",
+      protocol == "baseline" &
+        experiment_id == "high_uncertainty_fed" ~ "experimental_high_unc",
+      protocol == "baseline" &
+        experiment_id == "low_uncertainty_fed" ~ "experimental_low_unc"
+    )
+)
+ 
+# individual pellets per day
+
+i_daily <- i %>% 
+  group_by(
+    animal,
+    session, 
+    protocol,
+    group
+  ) %>% 
+  summarise(
+    intake = n()
+  ) %>% 
+  ungroup()
+
+# individual mean intake
+
+i_daily_ <- i_daily %>% 
+  filter(protocol %in% c("control", "experimental")) %>% 
+  group_by(
+    animal,
+    protocol,
+    group
+  ) %>% 
+  summarise(
+    m = mean(intake),
+    e = sd(intake) / sqrt(n())
+  ) %>% 
+  ungroup()
+  
+
+# statistical test
+
+i_s <- lmer(
+  data = i_daily %>% filter(protocol %in% c("control", "experimental")),
+  intake ~ group + (1 | animal)
+)
+i_s_emm <- emmeans::emmeans(i_s, specs = pairwise ~ group)
+summary(i_s)
+```
+
+
+## Lickometer
+
+```{r}
+# source lickometer library
+devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/src/lickometer_functions_compilate.R?raw=TRUE")
+
+# lickometer data for both pool with low and high uncertainty
+lickometer_uncertainty <- readRDS("../data/raw/lickometer_data.rds")
+
+# add relevant labels: experimental group and protocol
+
+labels <- i %>% 
+  select(animal, group, protocol, experiment_id) %>% 
+  distinct(., animal, .keep_all = TRUE) %>% 
+  rename(ID = animal)
+
+
+lickometer_data <- lickometer_uncertainty %>% 
+  left_join(
+    labels,
+    by = c("ID")
+  ) %>%
+  group_by(
+    group,
+    task_type
+  ) %>% 
+  # add session instead of dates
+  mutate(
+    session = as.numeric(as.factor(fecha)),
+    group = case_when(
+      ID %in% c(320, 323, 325, 326) ~ "experimental_high_unc",
+      ID %in% c(234, 235, 236, 245, 265) ~ "experimental_low_unc",
+      TRUE ~ "control"
+      )
+  ) %>% 
+  ungroup()
+
+# number of licks per spout/type of reward
+spout_pref <- lickometer_data %>% 
+  group_by(
+    ID,
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    task_type,
+    fecha,
+    experiment_id
+  ) %>% 
+  summarise(
+    n_licks = n(),
+    n_events = max(evento)
+  )
+
+# preference for sucrose in FR
+spout_pref_fr <- spout_pref %>% 
+  filter(task_type == "fr") %>% 
+  group_by(
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    fecha
+  ) %>% 
+  summarise(
+    mean_licks = mean(n_licks)
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    group,
+    protocol,
+    fecha
+  ) %>% 
+  mutate(
+    total_licks = sum(mean_licks),
+    relative_licks = (mean_licks / total_licks) * 100
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    group,
+    protocol,
+    tipo_recompensa
+  ) %>% 
+  summarise(
+    mean_licks_group = mean(relative_licks), 
+    err = sd(relative_licks) / sqrt(n())
+  )
+
+# statistical test
+
+l_basal <- spout_pref %>% 
+  filter(tipo_recompensa == "sacarosa", task_type == "fr", session %in% c(3, 4, 5)) %>% 
+  group_by(ID) %>% 
+  summarise(
+    b = median(n_licks),
+    be = median(n_events)
+  )
+
+l_s <- lmer(
+  data = spout_pref %>%
+    filter(tipo_recompensa == "sacarosa", task_type == "pr") %>% 
+    left_join(l_basal, by = "ID"),
+  n_licks ~ session * group + b + (1 | ID)
+)
+summary(l_s)
+
+l_s_emm <- as_tibble(emmeans::emtrends(l_s, pairwise~group, var = "session", infer = TRUE)$emtrends)
+```
+
+## Plots
+
+```{r}
+# weights
+p1 <- w_ %>% 
+  mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+         group = recode(group,
+                        control = "Control",
+                        experimental_low_unc = "Low",
+                        experimental_high_unc = "High")) %>% 
+  ggplot(aes(
+    group, m, color = group
+  )) +
+  stat_summary(fun = mean, na.rm = TRUE, 
+               geom = "point", color = "black", 
+               size = 4, shape = "diamond") +
+  stat_summary(fun.data = mean_cl_normal, na.rm = TRUE, 
+               geom = "errorbar", width = .2, color = "black",
+               position = position_dodge(width = .7)) +
+  geom_point(position = position_jitterdodge(jitter.width = .2, 
+                                             dodge.width = .7), 
+             alpha = .5) +
+  scale_color_brewer(palette = "Set2") +
+  theme_pubr() +
+  guides(color = guide_legend(
+    override.aes=list(shape = 0))) +
+  xlab("Group uncertainty") +
+  ylab("Mean weight (gr)") +
+  theme(
+    legend.position = "none",
+    legend.title = element_blank()
+  ) +
+  coord_equal(ratio = 1/4) +
+  scale_y_continuous(expand = c(0, 0)) +
+  expand_limits(y = 35) +
+  geom_signif(comparisons = list(c("Control", "High")),
+              map_signif_level = TRUE,
+              y_position = c(33),
+              tip_length = 0,
+              color = "black")
+p1
+
+# intake
+
+p2 <- i_daily_ %>% 
+  filter(protocol %in% c("control", "experimental")) %>% 
+  mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+         group = recode(group,
+                        control = "Control",
+                        experimental_low_unc = "Low",
+                        experimental_high_unc = "High")) %>% 
+  ggplot(aes(
+    group, m, color = group
+  )) +
+  stat_summary(fun = mean, na.rm = TRUE, 
+               geom = "point", color = "black", 
+               size = 4, shape = "diamond") +
+  stat_summary(fun.data = mean_cl_normal, na.rm = TRUE, 
+               geom = "errorbar", width = .2, color = "black",
+               position = position_dodge(width = .7)) +
+  geom_point(position = position_jitterdodge(jitter.width = .2, 
+                                             dodge.width = .7), 
+             alpha = .5) +
+  scale_color_brewer(palette = "Set2") +
+  theme_pubr() +
+  guides(color = guide_legend(
+    override.aes=list(shape = 0))) +
+  xlab("Group uncertainty") +
+  ylab("Mean daily intake (# pellets)") +
+  theme(
+    legend.position = "none",
+    legend.title = element_blank()
+  ) +
+  coord_equal(ratio = 1/6) +
+  scale_y_continuous(expand = c(0, 0)) +
+  expand_limits(y = 80) +
+  geom_signif(comparisons = list(c("Control", "High")),
+              map_signif_level = TRUE,
+              y_position = c(76),
+              tip_length = 0,
+              color = "black")
+p2
+
+# lickometer: licks over session (PR)
+
+tmp <- spout_pref %>% 
+  filter(task_type == "pr", tipo_recompensa == "sacarosa") %>% 
+  mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+         group = recode(group,
+                        control = "Control",
+                        experimental_low_unc = "Low",
+                        experimental_high_unc = "High")) %>% 
+  pivot_longer(., cols = c("n_licks", "n_events"), names_to = "var", values_to = "val") %>%
+  mutate(
+    var = recode(var,
+    n_events = "Number of events",
+    n_licks = "Number of licks"
+    )
+  ) %>% 
+  group_by(var) %>% 
+  group_split() %>% 
+  map(.,
+      function(x){
+        x %>% 
+  ggplot(aes(
+    session, val, color = group, group = group
+  )) +
+  stat_summary(fun = mean, na.rm = TRUE, 
+               geom = "col", aes(fill = group), 
+               size = 0,
+               position = position_dodge(width = .9)) +
+  stat_summary(aes(group = group, color = group), fun.data = mean_se, na.rm = TRUE, 
+               geom = "errorbar", width = .2, size = 0.5,
+               position = position_dodge(width = .9)) +
+  geom_point(inherit.aes = FALSE, aes(session, val, group = group, fill = group),
+             position = position_jitterdodge(jitter.width = .1, 
+                                             dodge.width = .9), 
+             alpha = .1) +
+  scale_color_brewer(palette = "Set2") +
+  scale_fill_brewer(palette = "Set2") +
+  guides(fill = guide_legend(override.aes = list(shape = 19)), color = "none") +
+  theme_pubr() +
+  theme(legend.title = element_blank()) +
+  scale_x_continuous(breaks = 1:7) +
+  xlab("Session number") +
+  ylab(x$var[1])
+      }
+  )
+
+p3 <- tmp[[2]]
+p4 <- tmp[[1]]
+
+# model slope estimates
+p5 <- l_s_emm %>% 
+  mutate(
+    group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+    group = recode(group,
+      control = "Control",
+      experimental_high_unc = "High",
+      experimental_low_unc = "Low"
+    )
+  ) %>% 
+  ggplot(aes(
+    group, session.trend, fill = group,
+    ymin = session.trend - SE,
+    ymax = session.trend + SE
+  )) +
+  geom_col() +
+  geom_errorbar(width = .2, size = 0.5) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_pubr() +
+  theme(legend.title = element_blank()) +
+  coord_equal(ratio = 1/20) +
+  ylab("Slope estimate") +
+  xlab("Group") +
+  scale_y_continuous(expand = c(0, 10)) +
+  expand_limits(y = 90) +
+  geom_signif(y_position = c(90), xmin = c(3), 
+              xmax = c(3), annotation = c("*"),
+              tip_length = 0)
+  
+  
+```
 
