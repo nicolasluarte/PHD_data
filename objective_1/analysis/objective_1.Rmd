@@ -8,7 +8,9 @@ pacman::p_load(
   mixtools,
   lme4,
   lmerTest,
-  ggsignif
+  ggsignif,
+  broom.mixed,
+  cowplot
 )
 ```
 
@@ -343,7 +345,7 @@ summary(i_s)
 ```
 
 
-## Lickometer
+## Lickometer FED
 
 ```{r}
 # source lickometer library
@@ -399,37 +401,21 @@ spout_pref <- lickometer_data %>%
 
 # preference for sucrose in FR
 spout_pref_fr <- spout_pref %>% 
-  filter(task_type == "fr") %>% 
-  group_by(
-    group,
-    protocol,
-    tipo_recompensa,
-    session,
-    fecha
-  ) %>% 
+  filter(task_type == "fr", tipo_recompensa == "sacarosa") %>% 
+  group_by(ID, group) %>% 
   summarise(
-    mean_licks = mean(n_licks)
-  ) %>% 
-  ungroup() %>% 
-  group_by(
-    group,
-    protocol,
-    fecha
-  ) %>% 
-  mutate(
-    total_licks = sum(mean_licks),
-    relative_licks = (mean_licks / total_licks) * 100
-  ) %>% 
-  ungroup() %>% 
-  group_by(
-    group,
-    protocol,
-    tipo_recompensa
-  ) %>% 
-  summarise(
-    mean_licks_group = mean(relative_licks), 
-    err = sd(relative_licks) / sqrt(n())
+    l_ = median(n_licks)
   )
+
+lfr_s <- lmer(
+  data = spout_pref %>%
+    filter(tipo_recompensa == "sacarosa", task_type == "fr") %>% 
+    left_join(l_basal, by = "ID"),
+  n_licks ~ group + (1 | ID)
+)
+summary(lfr_s)
+emmeans::emmeans(lfr_s, specs = pairwise ~ group) %>% emmeans::contrast()
+  
 
 # statistical test
 
@@ -445,11 +431,104 @@ l_s <- lmer(
   data = spout_pref %>%
     filter(tipo_recompensa == "sacarosa", task_type == "pr") %>% 
     left_join(l_basal, by = "ID"),
-  n_licks ~ session * group + b + (1 | ID)
+  n_licks ~ session * group + b +(1 | ID)
 )
 summary(l_s)
 
 l_s_emm <- as_tibble(emmeans::emtrends(l_s, pairwise~group, var = "session", infer = TRUE)$emtrends)
+
+# licks per minute
+
+l_bins <- lickometer_data %>%
+  filter(task_type == "pr", tipo_recompensa == "sacarosa") %>%
+  group_by(n_sesion, ID) %>% 
+  mutate(tiempo = tiempo - tiempo[1]) %>% 
+  ungroup() %>% 
+    group_by(
+      n_sesion, ID
+      ) %>%
+    mutate(
+      # variable timestamp contains time relative to the start of the session,
+      # bins are calculated based on the 
+      # length of the session
+      bins = cut(
+        tiempo,
+        breaks = seq(0, 60 * 60 * 1e3, by = 10 * 60 * 1e3),
+        labels = FALSE,
+        include.lowest = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(
+    ID, n_sesion, bins, group
+  ) %>% 
+  summarise(
+    n_l = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID, bins, group
+  ) %>% 
+  summarise(
+    n_l_m = median(n_l)
+  ) %>% 
+  ungroup() %>% 
+  group_by(ID) %>% 
+  mutate(
+    z_licks = scale(n_l_m)
+  )
+
+# statistical test licks per minute
+
+licks_m_s <- lmer(
+  data = l_bins,
+  n_l_m ~ group * bins + (1 | ID)
+)
+summary(licks_m_s)
+emmeans::emmeans(licks_m_s, specs = pairwise ~ group * bins, by = "bins", at = list(bins = c(1, 2, 3, 4, 5, 6)))
+
+# number of clusters
+
+pr_micro <- lickometer_data %>%
+  filter(task_type == "pr", tipo_recompensa == "sacarosa") %>% 
+  group_by(
+    ID,
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    task_type,
+    fecha,
+    experiment_id
+  ) %>% 
+  mutate(interval = tiempo - lag(tiempo, default = NA))
+
+clusters <- c(250, 500, 750, 1000) %>% 
+  map(., function(x){
+    burst_analysis(pr_micro, x) %>% 
+      ungroup() %>% 
+      group_by(
+        ID, group, n_sesion
+      ) %>% 
+      summarise(
+        n_cluster = n()
+      ) %>% 
+      mutate(n_sesion = as.numeric(n_sesion))
+  })
+
+# statistical test n clusters
+
+c_s_list <- 1:4 %>% 
+  map(., function(x){
+    c_s <- lmer(
+    data = clusters[[x]],
+    n_cluster ~ n_sesion * group + (1 | ID)
+)
+    return(c_s)
+  })
+
+c_s_emm <- 1:4 %>% 
+  map(., function(x){
+      as_tibble(emmeans::emtrends(c_s_list[[x]], pairwise~group, var = "n_sesion", infer = TRUE)$emtrends)
+  })
 ```
 
 ## Plots
@@ -466,10 +545,10 @@ p1 <- w_ %>%
     group, m, color = group
   )) +
   stat_summary(fun = mean, na.rm = TRUE, 
-               geom = "point", color = "black", 
-               size = 4, shape = "diamond") +
-  stat_summary(fun.data = mean_cl_normal, na.rm = TRUE, 
-               geom = "errorbar", width = .2, color = "black",
+               geom = "col", aes(fill = group), 
+               size = 0) +
+  stat_summary(fun.data = mean_se, na.rm = TRUE, 
+               geom = "errorbar", width = .2, aes(color = group),
                position = position_dodge(width = .7)) +
   geom_point(position = position_jitterdodge(jitter.width = .2, 
                                              dodge.width = .7), 
@@ -535,6 +614,8 @@ p2 <- i_daily_ %>%
               color = "black")
 p2
 
+# lickometer: licks sucrose (FR)
+
 # lickometer: licks over session (PR)
 
 tmp <- spout_pref %>% 
@@ -581,10 +662,16 @@ tmp <- spout_pref %>%
       }
   )
 
-p3 <- tmp[[2]]
+p3 <- tmp[[2]] + theme(legend.position = "none") + 
+  scale_y_continuous(expand = c(0, 0)) +
+  expand_limits(y = 3000)
+p3
+ggsave("p3.png", width = 4, height = 4)
+
 p4 <- tmp[[1]]
 
 # model slope estimates
+
 p5 <- l_s_emm %>% 
   mutate(
     group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
@@ -612,7 +699,158 @@ p5 <- l_s_emm %>%
   geom_signif(y_position = c(90), xmin = c(3), 
               xmax = c(3), annotation = c("*"),
               tip_length = 0)
+
+p5 + theme(legend.position = "none")
+ggsave("p5.png", width = 4, height = 4)
+
+# licks per minute
+
+p6 <- l_bins %>% 
+  ggplot(aes(
+    as.factor(bins), n_l_m, color = group, group  = group
+  )) +
+  stat_summary(fun = mean, na.rm = TRUE, 
+               geom = "line", aes(color = group), 
+               size = 1) +
+  stat_summary(aes(group = group, color = group), fun.data = mean_se, na.rm = TRUE, 
+               geom = "errorbar", width = .2, size = 0.5) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_pubr() +
+  theme(legend.position = "none") +
+  ylab("Mean number of licks") +
+  xlab("10 min intervals") +
+  scale_y_continuous(expand = c(0, 10)) +
+  expand_limits(y = 500)
+p6
+ggsave("p6.png", width = 4, height = 4)
+
+
+# clusters
+
+cluster_plots <- 1:4 %>% 
+  map(., function(x){
+clusters[[x]] %>%
+  mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+         group = recode(group,
+                        control = "Control",
+                        experimental_low_unc = "Low",
+                        experimental_high_unc = "High")) %>% 
+  ggplot(aes(
+    n_sesion, n_cluster
+  )) +
+  stat_summary(fun = mean, na.rm = TRUE, 
+               geom = "col", aes(fill = group), 
+               size = 0,
+               position = position_dodge(width = .9)) +
+  stat_summary(aes(group = group, color = group), fun.data = mean_se, na.rm = TRUE, 
+               geom = "errorbar", width = .2, size = 0.5,
+               position = position_dodge(width = .9)) +
+  geom_point(inherit.aes = FALSE, aes(n_sesion, n_cluster, group = group, fill = group),
+             position = position_jitterdodge(jitter.width = .1, 
+                                             dodge.width = .9), 
+             alpha = .1) +
+  scale_color_brewer(palette = "Set2") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_pubr() +
+  theme(legend.title = element_blank()) +
+  coord_equal(ratio = 1/80) +
+  scale_x_continuous(breaks = 1:7) +
+  scale_y_continuous(expand = c(0, 0)) +
+  expand_limits(y = 700) +
+  ylab("# Clusters") +
+  xlab("Sessions")
+  })
+
+cluster_emm <- 1:4 %>% 
+  map(., function(x){
+  c_s_emm[[x]] %>% 
+  mutate(
+    group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+    group = recode(group,
+      control = "Control",
+      experimental_high_unc = "High",
+      experimental_low_unc = "Low"
+    )
+  ) %>% 
+  ggplot(aes(
+    group, n_sesion.trend, fill = group,
+    ymin = n_sesion.trend - SE,
+    ymax = n_sesion.trend + SE
+  )) +
+  geom_col() +
+  geom_errorbar(width = .2, size = 0.5) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_pubr() +
+  theme(legend.title = element_blank()) +
+  coord_equal(ratio = 1/8) +
+  ylab("Slope estimate") +
+  xlab("Group") +
+  scale_y_continuous(expand = c(0, 10)) +
+  expand_limits(y = 40) +
+  geom_signif(y_position = c(30), xmin = c(3), 
+              xmax = c(3), annotation = c("*"),
+              tip_length = 0)
+  })
+
+cluster_plots[[1]] <- cluster_plots[[1]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) + xlab("")
+
+
+p7 <- cluster_plots[[2]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) +
+  ylab("# Clusters (500 ms)") + scale_y_continuous(expand = c(0, 0))
+p7
+ggsave("p7.png", width = 4, height = 4)
+
+cluster_plots[[3]] <- cluster_plots[[3]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) + xlab("")
+cluster_plots[[4]] <- cluster_plots[[4]] + theme(legend.position = "none")
+
+cluster_emm[[1]] <- cluster_emm[[1]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) + xlab("")
+
+p8 <- cluster_emm[[2]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) + xlab("Group") +
+  scale_y_continuous(expand = c(0, 10)) +
+  expand_limits(y = 40) + ylim(-10, 40)
+p8
+ggsave("p8.png", width = 4, height = 4)
+
+cluster_emm[[3]] <- cluster_emm[[3]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) + xlab("")
+cluster_emm[[4]] <- cluster_emm[[4]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+
+p9 <- spout_pref_fr %>% 
+  mutate(
+    group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
+    group = recode(group,
+      control = "Control",
+      experimental_high_unc = "High",
+      experimental_low_unc = "Low"
+    )) %>% 
+  ggplot(aes(
+    group, l_, color = group
+  )) +
+  stat_summary(fun = mean, na.rm = TRUE, 
+               geom = "col", aes(group = group, fill = group), 
+               size = 0,
+               position = position_dodge(width = .9)) +
+  stat_summary(aes(group = group, color = group), fun.data = mean_se, na.rm = TRUE, 
+               geom = "errorbar", width = .2, size = 0.5,
+               position = position_dodge(width = .9)) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_color_brewer(palette = "Set2") +
+  theme_pubr() +
+  theme(legend.title = element_blank()) +
+  coord_equal(ratio = 1/1000) +
+  ylab("Mean number of licks") +
+  xlab("Group") +
+  scale_y_continuous(expand = c(0, 0)) +
+  expand_limits(y = 4500) +
+  geom_signif(y_position = c(3600, 3850), xmin = c(1, 2), 
+              xmax = c(3, 3), annotation = c("*"),
+              tip_length = 0.01, color = "black") +
+  theme(legend.position = "none")
+p9
+ggsave("p9.png", width = 4, height = 4)
   
-  
+
+
+
 ```
 
