@@ -407,6 +407,14 @@ spout_pref_fr <- spout_pref %>%
     l_ = median(n_licks)
   )
 
+l_basal <- spout_pref %>% 
+  filter(tipo_recompensa == "sacarosa", task_type == "fr", session %in% c(3, 4, 5)) %>% 
+  group_by(ID) %>% 
+  summarise(
+    b = median(n_licks),
+    be = median(n_events)
+  )
+
 lfr_s <- lmer(
   data = spout_pref %>%
     filter(tipo_recompensa == "sacarosa", task_type == "fr") %>% 
@@ -419,13 +427,6 @@ emmeans::emmeans(lfr_s, specs = pairwise ~ group) %>% emmeans::contrast()
 
 # statistical test
 
-l_basal <- spout_pref %>% 
-  filter(tipo_recompensa == "sacarosa", task_type == "fr", session %in% c(3, 4, 5)) %>% 
-  group_by(ID) %>% 
-  summarise(
-    b = median(n_licks),
-    be = median(n_events)
-  )
 
 l_s <- lmer(
   data = spout_pref %>%
@@ -535,6 +536,7 @@ c_s_emm <- 1:4 %>%
 
 ```{r}
 # weights
+saveRDS(w_, 'plot_1_data.rds')
 p1 <- w_ %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
@@ -575,6 +577,7 @@ p1
 
 # intake
 
+saveRDS(i_daily_, 'plot_2_data.rds')
 p2 <- i_daily_ %>% 
   filter(protocol %in% c("control", "experimental")) %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
@@ -618,27 +621,18 @@ p2
 
 # lickometer: licks over session (PR)
 
-tmp <- spout_pref %>% 
+saveRDS(spout_pref, 'plot_3_data.rds')
+
+licks_tmp <- spout_pref %>% 
   filter(task_type == "pr", tipo_recompensa == "sacarosa") %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
                         control = "Control",
                         experimental_low_unc = "Low",
-                        experimental_high_unc = "High")) %>% 
-  pivot_longer(., cols = c("n_licks", "n_events"), names_to = "var", values_to = "val") %>%
-  mutate(
-    var = recode(var,
-    n_events = "Number of events",
-    n_licks = "Number of licks"
-    )
-  ) %>% 
-  group_by(var) %>% 
-  group_split() %>% 
-  map(.,
-      function(x){
-        x %>% 
-  ggplot(aes(
-    session, val, color = group, group = group
+                        experimental_high_unc = "High"))
+
+pl <- licks_tmp %>% ggplot(aes(
+    session, n_licks, color = group, group = group
   )) +
   stat_summary(fun = mean, na.rm = TRUE, 
                geom = "col", aes(fill = group), 
@@ -647,7 +641,7 @@ tmp <- spout_pref %>%
   stat_summary(aes(group = group, color = group), fun.data = mean_se, na.rm = TRUE, 
                geom = "errorbar", width = .2, size = 0.5,
                position = position_dodge(width = .9)) +
-  geom_point(inherit.aes = FALSE, aes(session, val, group = group, fill = group),
+  geom_point(inherit.aes = FALSE, aes(session, n_licks, group = group, fill = group),
              position = position_jitterdodge(jitter.width = .1, 
                                              dodge.width = .9), 
              alpha = .1) +
@@ -657,10 +651,7 @@ tmp <- spout_pref %>%
   theme_pubr() +
   theme(legend.title = element_blank()) +
   scale_x_continuous(breaks = 1:7) +
-  xlab("Session number") +
-  ylab(x$var[1])
-      }
-  )
+  xlab("Session number")
 
 p3 <- tmp[[2]] + theme(legend.position = "none") + 
   scale_y_continuous(expand = c(0, 0)) +
@@ -671,6 +662,8 @@ ggsave("p3.png", width = 4, height = 4)
 p4 <- tmp[[1]]
 
 # model slope estimates
+
+saveRDS(l_s_emm, 'plot_4_data.rds')
 
 p5 <- l_s_emm %>% 
   mutate(
@@ -727,14 +720,17 @@ ggsave("p6.png", width = 4, height = 4)
 
 # clusters
 
-cluster_plots <- 1:4 %>% 
-  map(., function(x){
-clusters[[x]] %>%
+c <- clusters[[2]]
+saveRDS(c, 'plot_6_data.rds')
+
+c <- c %>%
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
                         control = "Control",
                         experimental_low_unc = "Low",
-                        experimental_high_unc = "High")) %>% 
+                        experimental_high_unc = "High")) 
+
+c %>% 
   ggplot(aes(
     n_sesion, n_cluster
   )) +
@@ -759,7 +755,9 @@ clusters[[x]] %>%
   expand_limits(y = 700) +
   ylab("# Clusters") +
   xlab("Sessions")
-  })
+
+c_emm <- c_s_emm[[2]]
+saveRDS(c_emm, 'plot_7_data.rds')
 
 cluster_emm <- 1:4 %>% 
   map(., function(x){
@@ -814,6 +812,8 @@ ggsave("p8.png", width = 4, height = 4)
 cluster_emm[[3]] <- cluster_emm[[3]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm")) + xlab("")
 cluster_emm[[4]] <- cluster_emm[[4]] + theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm"))
 
+
+saveRDS(spout_pref_fr, 'plot_5_data.rds')
 
 p9 <- spout_pref_fr %>% 
   mutate(

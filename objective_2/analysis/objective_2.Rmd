@@ -1,0 +1,241 @@
+---
+title: "objective_2"
+author: "Luis Luarte"
+date: '2022-11-17'
+output: html_document
+---
+
+# Imports 
+
+```{r}
+pacman::p_load(
+  ggplot2,
+  tidyverse,
+  viridis,
+  ggpubr,
+  mixtools,
+  lme4,
+  lmerTest,
+  ggsignif,
+  broom.mixed,
+  cowplot
+)
+# source lickometer library
+devtools::source_url("https://github.com/lab-cpl/lickometer-library/blob/main/src/lickometer_functions_compilate.R?raw=TRUE")
+```
+
+# data import 
+
+```{r}
+objective_2_data <- readRDS('../data/objective_2_complete.RDS')
+objective_2_data <- objective_2_data %>% 
+  group_by(ID, n_sesion, sensor) %>% 
+  # correct 'actividad' , 'evento' , 'exito'
+  mutate(
+    actividad = actividad - actividad[1],
+    evento = evento - evento[1],
+    exito = as.numeric(exito),
+    exito = exito - exito[1],
+    # _bin are if a new event was triggered
+    evento_bin = evento - lag(evento, default = 0),
+    actividad_bin = actividad - lag(actividad, default = 0),
+    exito_bin = exito - lag(exito, default = 0)
+  ) %>%
+  ungroup()
+```
+
+# basaline vs random
+
+```{r}
+# baseline
+# add a column with mean baseline licks per spout
+baseline_total <- objective_2_data %>% 
+  mutate(period = exp_phase) %>% 
+  group_by(
+    ID,
+    n_sesion,
+    exp_group,
+    tipo_recompensa,
+    period,
+    sensor
+  ) %>% 
+  summarise(
+    evento_basal_ = sum(evento_bin),
+    actividad_basal_ = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(
+    ID, exp_group, tipo_recompensa, n_sesion, period, sensor
+  ) %>%
+  summarise(
+    evento_basal = mean(evento_basal_),
+    actividad_basal = mean(actividad_basal_)
+  ) %>% 
+  ungroup() %>% 
+  group_by(ID, exp_group, tipo_recompensa, n_sesion, period) %>% 
+  summarise(
+    e = mean(evento_basal),
+    l = mean(actividad_basal)
+  )
+
+# baseline for uncertainty group
+unc_comp <- baseline_total %>% 
+  filter(exp_group != "control") %>% 
+  mutate(
+    group = case_when(
+      tipo_recompensa == 'sacarosa' & period == 'basal' ~ 'Expected',
+      tipo_recompensa == 'sacarosa' & period == 'experimental' ~ 'Non-random',
+      tipo_recompensa == 'sacarosar' & period == 'experimental' ~ 'Random'
+    )
+  )
+saveRDS(unc_comp, "plot_1_data.rds")
+
+# statistical test
+p1_mdl <- lmer(
+  data = unc_comp,
+  l ~ group + (1 | ID)
+)
+summary(p1_mdl)
+p1_emm <- emmeans::emmeans(p1_mdl, specs = pairwise ~ group)
+```
+
+# licks pre-post
+
+```{r}
+# this is total number of licks per session
+# the sum of both spouts
+pre_post_l <- baseline_total %>% 
+  mutate(exp_group = if_else(exp_group == "experimental", "Uncertainty", "Control")) %>%
+  ungroup() %>% 
+  group_by(
+    ID, period, exp_group, n_sesion
+  ) %>% 
+  summarise(
+    e = sum(e),
+    l = sum(l)
+  )
+saveRDS(pre_post_l, 'plot_2_data.rds')
+
+pre_post_mdl <- lmer(
+  data = pre_post_l,
+  l ~ exp_group * period + (1 | ID)
+)
+summary(pre_post_mdl)
+pre_post_emm <- emmeans::emmeans(pre_post_mdl, specs = pairwise ~ exp_group * period)
+```
+
+# licks per bins
+
+```{r}
+l_bins <- objective_2_data %>%
+  group_by(n_sesion, ID) %>% 
+  mutate(tiempo = tiempo - tiempo[1]) %>% 
+  filter(tiempo <= 3600000) %>% 
+  ungroup() %>% 
+    group_by(
+      ID,
+      n_sesion
+      ) %>%
+    mutate(
+      # variable timestamp contains time relative to the start of the session,
+      # bins are calculated based on the 
+      # length of the session
+      bins = cut(
+        tiempo,
+        breaks = seq(0, 60 * 60 * 1e3, by = 10 * 60 * 1e3),
+        labels = FALSE,
+        include.lowest = TRUE)) %>% 
+  ungroup() %>% 
+  group_by(ID, n_sesion, bins, exp_phase, exp_group) %>% 
+  summarise(
+    l = n()
+  )
+
+bins_basal <- l_bins %>% 
+  filter(exp_phase == 'basal') %>% 
+  ungroup() %>% 
+  group_by(ID, bins) %>% 
+  summarise(basal_l = median(l))
+
+l_bins_cmp <- l_bins %>% 
+  left_join(bins_basal, by = c("ID", "bins")) %>% 
+  mutate(diff = l - basal_l)
+
+# statistics
+
+l_bins_cmp %>% 
+  filter(exp_phase == 'experimental') %>% 
+  ggplot(aes(as.factor(bins), l, color = exp_group)) +
+  geom_boxplot()
+
+saveRDS(l_bins_cmp, 'plot_3_data')
+
+l_bins_mdl <- lmer(
+  data = l_bins_cmp,
+  l ~ exp_group * bins + basal_l + (1 | ID)
+)
+summary(l_bins_mdl)
+bins_emm <- emmeans::emmeans(l_bins_mdl,
+                 specs = pairwise ~ exp_group:bins,
+                 by = "bins",
+                 at = list(bins = c(1, 2, 3, 4, 5, 6)))
+
+bins_slope <- emmeans::emtrends(l_bins_mdl, pairwise ~ exp_group, var = "bins") %>% 
+  emmeans::test()
+```
+
+# clusters
+
+```{r}
+data_burst <- objective_2_data %>% 
+  group_by(n_sesion) %>% 
+  mutate(interval = tiempo - lag(tiempo), timestamp = tiempo - lag(tiempo), group = exp_group) %>% 
+  ungroup()
+
+burst <- burst_analysis(data_burst, 500)
+
+# add exp_phase back
+labs_phase <- objective_2_data %>% 
+  select(ID, n_sesion, exp_phase) %>% 
+  distinct(n_sesion, exp_phase)
+burst <- burst %>% 
+  left_join(labs_phase, by = c("n_sesion"))
+
+# number of clusters
+n_clusters <- burst %>% 
+  filter(values == "in_cluster") %>% 
+  group_by(
+    ID, group, n_sesion, exp_phase
+  ) %>% 
+  summarise(
+    n_clusters = n()
+  )
+saveRDS(n_clusters, 'plot_4_data.rds')
+
+# statistics
+
+len_mdl <- lmer(
+  data = n_clusters,
+  n_clusters ~ group * exp_phase + (1 | ID)
+)
+summary(len_mdl)
+len_emm <- emmeans::emmeans(len_mdl, specs = pairwise ~ group:exp_phase, by = 'group')
+
+# length of clusters
+# number of clusters
+s_clusters <- burst %>% 
+  filter(values == "in_cluster") %>% 
+  group_by(
+    ID, group, n_sesion, exp_phase
+  )
+saveRDS(s_clusters, 'plot_5_data.rds')
+
+# statistical test
+s_c_mdl <- lmer(
+  data = l_clusters,
+  cluster_length ~ group * exp_phase + (1 | ID)
+)
+s_emm <- emmeans::emmeans(s_c_mdl, specs = pairwise ~ group:exp_phase, by = 'group')
+
+```
+
