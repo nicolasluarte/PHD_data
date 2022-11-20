@@ -216,7 +216,10 @@ p5 <- p5_data %>%
               aes(y_position = c(18), xmin = c(1), 
                   xmax = c(2), annotations = c('NS.', '*')),
               tip_length = 0.01, color = "black", manual = TRUE)
-p5                    
+p5
+
+
+# plot 6: length of clusters
 
 # panel
 

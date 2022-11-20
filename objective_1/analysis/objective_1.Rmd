@@ -515,6 +515,28 @@ clusters <- c(250, 500, 750, 1000) %>%
       mutate(n_sesion = as.numeric(n_sesion))
   })
 
+# cluster length
+
+cl <- burst_analysis(pr_micro, 500)
+cluster_length <- cl %>% 
+  group_by(
+    ID, group, n_sesion
+  ) %>% 
+  summarise(
+    l_cluster = sum(cluster_length)
+  ) %>% 
+  mutate(n_sesion = as.numeric(n_sesion))
+
+# statistical test len clusters
+c_l_mdl <- lmer(
+  data = cluster_length,
+  l_cluster ~ group * n_sesion + (1 | ID)
+)
+summary(c_l_mdl)
+
+c_l_trend <- emmeans::emtrends(c_l_mdl, pairwise~group, var = 'n_sesion', infer = TRUE)
+saveRDS(c_l_trend, 'plot_8_data.rds')
+
 # statistical test n clusters
 
 c_s_list <- 1:4 %>% 
