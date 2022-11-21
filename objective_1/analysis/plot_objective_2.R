@@ -17,9 +17,9 @@ p1_data <- readRDS('plot_1_data.rds')
 p1 <- p1_data %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
-                        control = "Control",
-                        experimental_low_unc = "Low",
-                        experimental_high_unc = "High")) %>% 
+                        control = "C",
+                        experimental_low_unc = "L",
+                        experimental_high_unc = "H")) %>% 
   ggplot(aes(
     group, m, color = group
   )) +
@@ -54,9 +54,9 @@ p2 <- p2_data %>%
   filter(protocol %in% c("control", "experimental")) %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
-                        control = "Control",
-                        experimental_low_unc = "Low",
-                        experimental_high_unc = "High")) %>% 
+                        control = "C",
+                        experimental_low_unc = "L",
+                        experimental_high_unc = "H")) %>% 
   ggplot(aes(
     group, m, color = group
   )) +
@@ -90,9 +90,9 @@ p3_data <- readRDS('plot_3_data.rds') %>%
   filter(task_type == "pr", tipo_recompensa == "sacarosa") %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
-                        control = "Control",
-                        experimental_low_unc = "Low",
-                        experimental_high_unc = "High"))
+                        control = "C",
+                        experimental_low_unc = "L",
+                        experimental_high_unc = "H"))
 
 p3 <- p3_data %>% ggplot(aes(
   session, n_licks, color = group, group = group
@@ -130,9 +130,9 @@ p4 <- p4_data %>%
   mutate(
     group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
     group = recode(group,
-                   control = "Control",
-                   experimental_high_unc = "High",
-                   experimental_low_unc = "Low"
+                   control = "C",
+                   experimental_high_unc = "H",
+                   experimental_low_unc = "L"
     )
   ) %>% 
   ggplot(aes(
@@ -151,10 +151,7 @@ p4 <- p4_data %>%
   scale_y_continuous(expand = c(0, 0),
                      breaks = seq(-50, 100, 25),
                      limits = c(-50, 100)
-  ) +
-  geom_signif(y_position = c(90), xmin = c(3), 
-              xmax = c(3), annotation = c("*"),
-              tip_length = 0)
+  )
 p4
 
 
@@ -164,9 +161,9 @@ p5_data <- readRDS('plot_5_data.rds') %>%
   mutate(
     group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
     group = recode(group,
-                   control = "Control",
-                   experimental_high_unc = "High",
-                   experimental_low_unc = "Low"
+                   control = "C",
+                   experimental_high_unc = "H",
+                   experimental_low_unc = "L"
     ))
 
 
@@ -191,9 +188,10 @@ p5 <- p5_data %>%
                      breaks = seq(0, 4500, 500),
                      limits = c(0, 4500)
   ) +
-  geom_signif(y_position = c(3600, 4000), xmin = c(1, 2), 
-              xmax = c(3, 3), annotation = c("*"),
+  geom_signif(y_position = c(3600, 4100), xmin = c(1, 2), 
+              xmax = c(3, 3), annotation = c(""),
               tip_length = 0.01, color = "black")
+p5
 
 
 # plot 6: number of clusters
@@ -201,9 +199,9 @@ p5 <- p5_data %>%
 p6_data <- readRDS('plot_6_data.rds') %>% 
   mutate(group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
          group = recode(group,
-                        control = "Control",
-                        experimental_low_unc = "Low",
-                        experimental_high_unc = "High"))
+                        control = "C",
+                        experimental_low_unc = "L",
+                        experimental_high_unc = "H"))
 
 p6 <- p6_data %>% 
   ggplot(aes(
@@ -238,9 +236,9 @@ p7_data <- readRDS('plot_7_data.rds') %>%
   mutate(
         group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
         group = recode(group,
-                       control = "Control",
-                       experimental_high_unc = "High",
-                       experimental_low_unc = "Low"
+                       control = "C",
+                       experimental_high_unc = "H",
+                       experimental_low_unc = "L"
         )
       )
 
@@ -261,10 +259,7 @@ p7 <- p7_data %>%
       scale_y_continuous(expand = c(0, 0),
                      breaks = seq(-10, 40, 10),
                      limits = c(-10, 40)
-      ) +
-      geom_signif(y_position = c(30), xmin = c(3), 
-                  xmax = c(3), annotation = c("*"),
-                  tip_length = 0)
+      )
 
 
 # Plot 8: length of clusters
@@ -273,9 +268,9 @@ c_l <- readRDS('plot_8_data.rds')$emtrends %>%
   mutate(
     group = factor(group, levels = c("control", "experimental_low_unc", "experimental_high_unc")),
     group = recode(group,
-                   control = "Control",
-                   experimental_high_unc = "High",
-                   experimental_low_unc = "Low"
+                   control = "C",
+                   experimental_high_unc = "H",
+                   experimental_low_unc = "L"
     )
   )
 
@@ -296,21 +291,20 @@ p8 <- c_l %>%
   scale_y_continuous(expand = c(0, 0),
                      breaks = seq(-50, 150, 50),
                      limits = c(-50, 150)
-  ) +
-  geom_signif(y_position = c(100), xmin = c(3), 
-              xmax = c(3), annotation = c("*"),
-              tip_length = 0)
+  )
 
 
 # panel
 
+ylab_hjust <- 0.5
+
 panel_1 <- ggdraw() +
-  draw_plot(p3+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 0,       y = .5, width = 3/6, height = .5) +
-  draw_plot(p4+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0), axis.ticks.x=element_blank(), axis.text.x=element_blank()), x = 3/6,     y = .5, width = 1.5/6, height = .5) +
-  draw_plot(p5+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0), axis.ticks.x=element_blank(), axis.text.x=element_blank()), x = 4.5/6,   y = .5, width = 1.5/6, height = .5) +
-  draw_plot(p6+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 0,       y = 0,  width = 3/6, height = .5) +
-  draw_plot(p7+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0), axis.ticks.x=element_blank(), axis.text.x=element_blank()), x = 3/6,     y = 0,  width = 1.5/6, height = .5) +
-  draw_plot(p8+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0), axis.ticks.x=element_blank(), axis.text.x=element_blank()), x = 4.5/6,   y = 0,  width = 1.5/6, height = .5) +
+  draw_plot(p3+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=ylab_hjust)), x = 0,       y = .5, width = 3/6, height = .5) +
+  draw_plot(p4+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=ylab_hjust)), x = 3/6,     y = .5, width = 1.5/6, height = .5) +
+  draw_plot(p5+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=ylab_hjust)), x = 4.5/6,   y = .5, width = 1.5/6, height = .5) +
+  draw_plot(p6+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=ylab_hjust)), x = 0,       y = 0,  width = 3/6, height = .5) +
+  draw_plot(p7+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=ylab_hjust)), x = 3/6,     y = 0,  width = 1.5/6, height = .5) +
+  draw_plot(p8+xlab('')+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=ylab_hjust)), x = 4.5/6,   y = 0,  width = 1.5/6, height = .5) +
   draw_plot_label(label = c("A", "B", "C", "D", "E", "F"), size = 12, x = c(0, 3/6, 4.5/6, 0, 3/6, 4.5/6), y = c(1, 1, 1, 0.5, 0.5, 0.5))
 
 png("panel_1.png", width = 6, height = 4, units = "in", res = 300)

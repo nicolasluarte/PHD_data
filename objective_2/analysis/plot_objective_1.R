@@ -35,17 +35,18 @@ p1 <- p1_data %>%
   geom_line(aes(group = ID), alpha = 0.25, color = "black") +
   geom_jitter(width = 0.01, alpha = 0.5, size = 2.5) +
   geom_signif(y_position = c(1150, 1350, 1150), xmin = c(1, 1, 2.1), 
-              xmax = c(1.9, 3, 3), annotation = c("*", "p=0.051", "*"),
+              xmax = c(1.9, 3, 3), annotation = c("", "", ""),
               tip_length = 0.01, color = "black") +
   theme_pubr() +
   theme(legend.position = "none") +
   scale_color_manual(values = color_p) +
-  ylab('# licks per spout') +
+  ylab('Average # licks') +
   xlab("") +
   scale_y_continuous(expand = c(0, 0),
                      breaks = seq(0, 1500, 500),
                      limits = c(0, 1500)
-                     )
+                     ) +
+  scale_x_discrete(labels = c("Baseline", "p = 1", "p = 0.5"))
 p1
 
 # plot 2: pre-post licks control vs uncertainty group
@@ -83,12 +84,8 @@ p2 <- p2_data %>%
                      limits = c(0, 2000)
   ) +
   scale_color_manual(values = c('Baseline'="gray30", 'Experimental'="black")) +
-  ylab('# licks per session') +
-  xlab("") +
-  geom_signif(
-    comparisons = list(c('Baseline', 'Experimental')),
-    map_signif_level = TRUE
-  )
+  ylab('Total # licks') +
+  xlab("")
 p2
 
 # plot 3: licks per time bins
@@ -122,7 +119,7 @@ p3 <- p3_data %>%
   ylab('# licks') +
   xlab('10 min intervals') +
   geom_signif(y_position = c(450), xmin = c(1), 
-              xmax = c(6), annotation = c("*"),
+              xmax = c(6), annotation = c(""),
               tip_length = 0, color = 'black') +
   scale_y_continuous(expand = c(0, 0),
                      breaks = seq(0, 500, 100),
@@ -172,7 +169,7 @@ p4 <- p4_data %>%
   xlab("") +
   geom_signif(data = data.frame(group = c("Control","Uncertainty")),
               aes(y_position = c(150), xmin = c(1), 
-              xmax = c(2), annotations = c('NS.', '*')),
+              xmax = c(2), annotations = c('', '')),
               tip_length = 0.01, color = "black", manual = TRUE)
 p4
 
@@ -210,11 +207,11 @@ p5 <- p5_data %>%
                      limits = c(0, 20)
   ) +
   scale_color_manual(values = c('Baseline'="gray30", 'Experimental'="black")) +
-  ylab('Size of clusters') +
+  ylab('Cluster size') +
   xlab("") +
   geom_signif(data = data.frame(group = c("Control","Uncertainty")),
-              aes(y_position = c(18), xmin = c(1), 
-                  xmax = c(2), annotations = c('NS.', '*')),
+              aes(y_position = c(11, 16), xmin = c(1), 
+                  xmax = c(2), annotations = c('', '')),
               tip_length = 0.01, color = "black", manual = TRUE)
 p5
 
@@ -223,12 +220,14 @@ p5
 
 # panel
 
+ylab_hjust <- 0.5
+
 panel_2 <- ggdraw() +
-  draw_plot(p2+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 0,       y = .5, width = 1/3, height = .5) +
-  draw_plot(p4+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 1/3,     y = .5, width = 1/3, height = .5) +
-  draw_plot(p5+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 1/3 * 2, y = .5, width = 1/3, height = .5) +
-  draw_plot(p1+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 0,       y = 0, width = 1/2, height = .5) +
-  draw_plot(p3+theme(legend.position = 'none', text = element_text(size = 10), axis.title.y = element_text(hjust=0)), x = 1/2,     y = 0, width = 1/2, height = .5) +
+  draw_plot(p2+theme(legend.position = 'none', text = element_text(size = 9.5), axis.title.y = element_text(hjust=ylab_hjust)), x = 0,       y = .5, width = 1/3, height = .5) +
+  draw_plot(p4+theme(legend.position = 'none', text = element_text(size = 9.5), axis.title.y = element_text(hjust=ylab_hjust)), x = 1/3,     y = .5, width = 1/3, height = .5) +
+  draw_plot(p5+theme(legend.position = 'none', text = element_text(size = 9.5), axis.title.y = element_text(hjust=ylab_hjust)), x = 1/3 * 2, y = .5, width = 1/3, height = .5) +
+  draw_plot(p1+theme(legend.position = 'none', text = element_text(size = 9.5), axis.title.y = element_text(hjust=ylab_hjust)), x = 0,       y = 0, width = 1/2, height = .5) +
+  draw_plot(p3+theme(legend.position = 'none', text = element_text(size = 9.5), axis.title.y = element_text(hjust=ylab_hjust)), x = 1/2,     y = 0, width = 1/2, height = .5) +
   draw_plot_label(label = c("A", "B", "C", "D", "E"), size = 15, x = c(0,1/3,1/3*2,0,1/2), y = c(1, 1, 1, 0.5, 0.5))
 
 png("panel_2.png", width = 6, height = 4, units = "in", res = 300)
