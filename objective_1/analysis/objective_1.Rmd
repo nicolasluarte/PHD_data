@@ -10,7 +10,8 @@ pacman::p_load(
   lmerTest,
   ggsignif,
   broom.mixed,
-  cowplot
+  cowplot,
+  ggridges
 )
 ```
 
@@ -73,6 +74,7 @@ weekly_intake <- daily_intake %>%
   )
 
 p_weekly_intake <- weekly_intake %>% 
+  filter(week <= 8) %>% 
   ggplot(aes(
     week, m, color = group, group = ID
   )) +
@@ -80,12 +82,37 @@ p_weekly_intake <- weekly_intake %>%
   geom_line(alpha = 0.2) +
   stat_summary(aes(group=group), fun=mean, geom="line") +
   stat_summary(aes(group=group, width = 0.2),fun.data = mean_se, geom = "errorbar") +
-  scale_color_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE,label = c("No uncertainty", "Uncertainty")) +
   scale_x_continuous(breaks = seq(1:max(weekly_intake$week))) +
   theme_pubr() +
   ylab("Mean number of pellets") +
-  xlab("Weeks")
+  xlab("Weeks") +
+  theme(legend.title = element_blank())
 p_weekly_intake
+ggsave('weekly_intake.png', height = 4, width = 6)
+
+# mean intake
+level_order <- c(413, 416, 417, 418, 419, 414, 415, 420, 421, 422)
+daily_intake %>% 
+  mutate(ID = factor(ID, level = level_order)) %>% 
+  filter(week <= 8) %>% 
+  ggplot(aes(
+    ID, intake, color = group
+  )) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.5, width = 0.1) +
+  scale_color_viridis(discrete=TRUE,label = c("No uncertainty", "Uncertainty")) +
+  theme_pubr() +
+  theme(legend.title = element_blank())
+ggsave('intake_distribution.png', height = 4, width = 6)
+  
+
+# stats on intake
+intake_mdl <- lmer(
+  data = daily_intake %>% filter(week > 1),
+  intake ~ group * as.numeric(as.factor(date)) + (1 | ID)
+)
+summary(intake_mdl)
 ```
 
 ## Delay
@@ -96,7 +123,7 @@ p_weekly_intake
 #                           #
 
 delay_data <- intake_data %>% 
-  filter(group == "uncertainty") %>% 
+  filter(group == "uncertainty", week > 1) %>% 
   mutate(hour = lubridate::hour(time)) %>% 
   group_by(ID, hour) %>% 
   slice(-1) %>% # remove first removal, corresponds to previous block
@@ -110,11 +137,70 @@ delay_data <- intake_data %>%
   mutate(z_ret = scale(ret))
 
 raw_ret <- delay_data %>% 
-  ggplot(aes(delay, ret)) +
-  geom_point() +
-  scale_x_continuous(breaks = c(15, 60, 120, 180, 240, 300)) +
-  geom_smooth(method="lm")
+  ggplot(aes(as.factor(delay), ret)) +
+  geom_violin(width=1) +
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  scale_x_discrete(breaks = c(15, 60, 120, 180, 240, 300)) +
+  geom_smooth(method="lm") +
+  theme_pubr() +
+  ylab("Retrieval in seconds") +
+  xlab("Delays")
 raw_ret
+ggsave('retrieval_distribution.png', height = 4, width = 6)
+
+delay_data %>% 
+  ggplot(aes(ret, as.factor(delay), fill = as.factor(delay), group = as.factor(delay))) +
+  geom_density_ridges(fill = "#00AFBB") +
+  stat_density_ridges(quantile_lines = TRUE) +
+  theme_pubr() +
+  xlab("Retrieval in seconds") +
+  ylab("Delays")
+ggsave('retrieval_density.png', height = 4, width = 6)
+
+delay_data %>% 
+  ggplot(aes(ret, color = as.factor(delay))) +
+  stat_ecdf(geom = "step") +
+  theme_pubr()
+ggsave('retrieval_ecdf.png', height = 4, width = 6)
+
+# categorize retrieval times
+ret_cat <- delay_data %>% 
+  group_by(ID) %>% 
+  mutate(
+    qntls = as.numeric(as.factor(cut(
+      ret, 
+      breaks = quantile(ret, probs=seq(0,1, by=0.25), na.rm=TRUE),
+      include.lowest=TRUE
+    )))
+  )
+
+# proportions of retrievals
+proportions <- ret_cat %>% 
+  group_by(ID, week) %>% 
+  mutate(cnt = n()) %>% 
+  ungroup() %>% 
+  group_by(ID, week, qntls, cnt) %>% 
+  summarise(
+    cc = n()
+  ) %>% 
+  ungroup() %>% 
+  group_by(ID, week, qntls) %>% 
+  mutate(prop = cc / cnt)
+
+proportions %>% 
+  filter(week <= 8) %>% 
+  ggplot(aes(
+    as.factor(week), prop, color = as.factor(qntls)
+  )) +
+  stat_summary(aes(group=qntls), fun=mean, geom="point") +
+  stat_summary(aes(group=qntls), fun=mean, geom="line", size = 1.2) +
+  stat_summary(aes(group=qntls, width = 0.2),fun.data = mean_se,
+               geom = "errorbar", size = 1.2, width = 0.1) +
+  theme_pubr() +
+  ylab("% of total") +
+  xlab("Weeks") +
+  labs(color = 'Quantiles')
+ggsave('proportions.png', height = 4, width = 6)
 
 z_ret <- delay_data %>% 
   ggplot(aes(delay, z_ret)) +

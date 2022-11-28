@@ -45,6 +45,9 @@ p1 <- p1_data %>%
               tip_length = 0,
               color = "black")
 p1
+png("weight.png", width = 6, height = 4, units = "in", res = 300)
+print(p1)
+dev.off()
 
 # plot 2: intake
 
@@ -82,6 +85,9 @@ p2 <- p2_data %>%
               tip_length = 0,
               color = "black")
 p2
+png("intake.png", width = 6, height = 4, units = "in", res = 300)
+print(p2)
+dev.off()
 
 
 # plot 3: licks over sessions
