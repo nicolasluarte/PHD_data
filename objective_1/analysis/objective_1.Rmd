@@ -15,6 +15,60 @@ pacman::p_load(
 )
 ```
 
+# Weights
+
+```{r}
+pool3_weight <- read_csv("https://raw.githubusercontent.com/nicolasluarte/PHD_data/main/objective_1/data/raw/weights/weights_pool3.csv")
+weight_data_1_2 <- readRDS('../data/raw/weights.rds') %>% 
+  # add groups
+  mutate(
+      group = case_when(
+      animal %in% c(320, 323, 325, 326) ~ "uncertainty++",
+      animal %in% c(234, 235, 236, 245, 265) ~ "uncertainty+",
+      TRUE ~ "no-uncertainty"
+      ),
+      ID = as.factor(animal),
+      date = lubridate::ymd(date)
+  ) %>% 
+  filter(animal != 246) %>%  # animal was euthanized
+  select(ID, date, weight, group)
+
+weight_data_3 <- pool3_weight %>% 
+  mutate(
+    group = if_else(ID %in% c(413, 416, 417, 418, 419), "uncertainty+++", "no-uncertainty"), # experimental groups
+    ID = as.factor(ID),
+    date = lubridate::ymd(date)
+  ) %>% 
+  filter(
+    date >= "2022-01-01" # exclude test data
+  ) 
+
+weights <- bind_rows(weight_data_1_2, weight_data_3)
+
+weight_summary <- weights %>% 
+  group_by(ID) %>% 
+  slice(which.max(date)) %>% 
+  ungroup() %>% 
+  group_by(ID, group) %>% 
+  summarise(
+    mean_weight = mean(weight)
+  )
+
+weight_plot <- weight_summary %>% 
+  ggplot(aes(group, mean_weight)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point() +
+  ylab("Mean weight (gr)") +
+  xlab("") +
+  scale_x_discrete(labels=c("No-uncertainty", "Uncertainty+", "Uncertainty++", "Uncertainty+++")) +
+  theme_pubr() +
+  theme(text = element_text(size = 20)) 
+ggsave("weights.png", plot = weight_plot, width = 15, height = 10)
+
+
+```
+
+
 ```{r, intake-data-import, echo=FALSE}
 intake_files <- list.files(path = "../data/raw/intake",
                           pattern = "^4", # change this to import all animals
@@ -40,7 +94,79 @@ intake_data <- intake_data %>%
   filter(
     date >= "2022-01-01", # exclude test data
     delay != 1 # delays equals to 1 are test pellets
+  ) %>% 
+  mutate(pool = "Uncertainty+++") %>% 
+  select(
+    date, ID, pellets, pool, group, week
   )
+
+# import raw data
+fed_high_uncertainty <- readRDS("../data/raw/high_uncertainty.rds") %>% 
+  mutate(pool = "Uncertainty++", 
+         week = lubridate::week(ymd_hms)) %>% 
+  rename(date = ymd,
+         ID = animal)
+fed_low_uncertainty <- readRDS("../data/raw/low_uncertainty.rds") %>% 
+  mutate(pool = "Uncertainty+", 
+         week = lubridate::week(ymd_hms)) %>% 
+  rename(date = ymd,
+         ID = animal)
+
+# merge both fed data sets
+i <- bind_rows(
+  fed_high_uncertainty,
+  fed_low_uncertainty
+) %>% 
+# add session numbers
+group_by(ID) %>% 
+mutate(session = as.numeric(as.factor(date))) %>% 
+ungroup() %>% 
+# animal was euthanized
+# sessions greater than 35 are fed maintenance and test
+filter(session <= 35, ID != 246) %>% 
+# group both controls together
+mutate(
+    group = case_when(
+      protocol == "control" ~ "control",
+      protocol == "experimental" &
+        experiment_id == "high_uncertainty_fed" ~ "experimental_high_unc",
+      protocol == "experimental" &
+        experiment_id == "low_uncertainty_fed" ~ "experimental_low_unc",
+      protocol == "baseline" &
+        experiment_id == "high_uncertainty_fed" ~ "experimental_high_unc",
+      protocol == "baseline" &
+        experiment_id == "low_uncertainty_fed" ~ "experimental_low_unc"
+    )
+) %>% 
+  select(date, ID, pellets, pool, group, week)
+
+
+all_intake <- bind_rows(intake_data, i) %>% 
+  group_by(ID, date, week, group) %>% 
+  summarise(
+    intake = n()
+  )
+
+all_intake_summary <- all_intake %>% 
+  group_by(ID) %>% 
+  slice(which.max(week)) %>% 
+  ungroup() %>% 
+  group_by(ID, group) %>% 
+  summarise(
+    mean_intake = mean(intake)
+  )
+  
+  
+weight_summary <- weights %>% 
+  group_by(ID) %>% 
+  slice(which.max(date)) %>% 
+  ungroup() %>% 
+  group_by(ID, group) %>% 
+  summarise(
+    mean_weight = mean(weight)
+  )
+  
+ 
 ```
 
 # ONGOING
