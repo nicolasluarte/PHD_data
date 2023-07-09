@@ -65,15 +65,15 @@ p2_data <- readRDS('plot_2_data.rds') %>%
 p2 <- p2_data %>% 
   ggplot(aes(period, l,
              group = period,
-             color = period,
+             color = exp_group,
              #color= interaction(exp_group, period)
              )) +
   facet_wrap(~exp_group, strip.position = "bottom") +
-  geom_boxplot(outlier.shape = NA, alpha = 0.5) +
-  geom_point(alpha = 0.25, size = 2.5) +
+  geom_boxplot(outlier.shape = NA, linewidth = 2) +
+  geom_point(alpha = 0.25, size = 8, shape = 0) +
   geom_line(aes(group = ID), alpha = 0.25) +
   theme_pubr() +
-  theme(#legend.position = "none",
+  theme(legend.position = "none",
         legend.title = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
@@ -83,7 +83,7 @@ p2 <- p2_data %>%
                      breaks = seq(0, 2000, 500),
                      limits = c(0, 2000)
   ) +
-  scale_color_manual(values = c('Baseline'="gray30", 'Experimental'="black")) +
+  scale_color_manual(values = c("Control" = "black", "Uncertainty" = "#52AAD9")) +
   ylab('Total # licks') +
   xlab("")
 p2
@@ -175,11 +175,11 @@ p4
 
 # plot 5: length of clusters
 
-p5_data <- readRDS('plot_5_data.rds') %>% 
+stu_figE_data <- readRDS('../../objective_2/analysis/plot_4_data.rds') %>% 
   ungroup() %>% 
   group_by(group, exp_phase, ID) %>% 
   summarise(
-    c = mean(cluster_length)
+    c = mean(n_clusters)
   ) %>% 
   mutate(
     exp_phase = recode(exp_phase, basal = "Baseline", experimental = "Experimental"),
@@ -187,7 +187,7 @@ p5_data <- readRDS('plot_5_data.rds') %>%
   )
 
 
-p5 <- p5_data %>% 
+stu_figE <- stu_figE_data %>% 
   ggplot(aes(
     exp_phase, c, color = exp_phase
   )) +
@@ -196,7 +196,8 @@ p5 <- p5_data %>%
   geom_point(alpha = 0.25, size = 2.5, position = position_dodge(0.9)) +
   geom_line(aes(group = ID), alpha = 0.25) +
   theme_pubr() +
-  theme(#legend.position = "none",
+  theme(
+     legend.position = "none",
     legend.title = element_blank(),
     axis.text.x = element_blank(),
     axis.ticks.x = element_blank(),
@@ -208,12 +209,8 @@ p5 <- p5_data %>%
   ) +
   scale_color_manual(values = c('Baseline'="gray30", 'Experimental'="black")) +
   ylab('Cluster size') +
-  xlab("") +
-  geom_signif(data = data.frame(group = c("Control","Uncertainty")),
-              aes(y_position = c(11, 16), xmin = c(1), 
-                  xmax = c(2), annotations = c('', '')),
-              tip_length = 0.01, color = "black", manual = TRUE)
-p5
+  xlab("")
+stu_figE
 
 
 # plot 6: length of clusters

@@ -1,0 +1,10 @@
+FI_level,BMI,OR,low,high
+Mild,Underweight,0.76,0.18,1.7
+Mild,Overweight,1.05,0.56,1.53
+Mild,Obese,1.17,0.92,1.42
+Moderate,Underweight,1.38,1.07,1.68
+Moderate,Overweight,0.91,0.49,1.34
+Moderate,Obese,1.15,0.98,1.32
+Severe,Underweight,1.49,1.12,1.85
+Severe,Overweight,1.37,1.12,1.61
+Severe,Obese,1.29,1.02,1.57

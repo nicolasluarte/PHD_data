@@ -1,0 +1,7 @@
+Sex,BMI,OR,low,high
+Male,Underweight,0.92,0.43,1.4
+Male,Overweight,0.68,0.55,0.81
+Male,Obese,1.01,0.85,1.17
+Female,Underweight,1.03,0.77,1.3
+Female,Overweight,1.15,0.91,1.39
+Female,Obese,1.26,1.05,1.46

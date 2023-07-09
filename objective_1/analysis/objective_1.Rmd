@@ -3,15 +3,10 @@
 pacman::p_load(
   ggplot2,
   tidyverse,
-  viridis,
   ggpubr,
-  mixtools,
+  viridis,
   lme4,
-  lmerTest,
-  ggsignif,
-  broom.mixed,
-  cowplot,
-  ggridges
+  lmerTest
 )
 ```
 
@@ -31,7 +26,7 @@ weight_data_1_2 <- readRDS('../data/raw/weights.rds') %>%
       date = lubridate::ymd(date)
   ) %>% 
   filter(animal != 246) %>%  # animal was euthanized
-  select(ID, date, weight, group)
+  dplyr::select(ID, date, weight, group)
 
 weight_data_3 <- pool3_weight %>% 
   mutate(
@@ -47,7 +42,7 @@ weights <- bind_rows(weight_data_1_2, weight_data_3)
 
 weight_summary <- weights %>% 
   group_by(ID) %>% 
-  slice(which.max(date)) %>% 
+  dplyr::slice(which.max(date)) %>% 
   ungroup() %>% 
   group_by(ID, group) %>% 
   summarise(
@@ -70,7 +65,7 @@ ggsave("weights.png", plot = weight_plot, width = 15, height = 10)
 
 
 ```{r, intake-data-import, echo=FALSE}
-intake_files <- list.files(path = "../data/raw/intake",
+intake_files <- list.files(path = "~/repos_sync/PHD_data/objective_1/data/raw/intake/",
                           pattern = "^4", # change this to import all animals
                           recursive = TRUE,
                           full.names = TRUE)
@@ -81,7 +76,7 @@ intake_data <- read_csv(intake_files) %>%
     animal = as.factor(animal)
   ) %>% 
   filter(time >= "2022-09-26 00:00:00") %>% 
-  rename(ID = animal)
+  dplyr::rename(ID = animal)
 ```
 
 ```{r data-preproc, echo=FALSE}
@@ -96,8 +91,8 @@ intake_data <- intake_data %>%
     delay != 1 # delays equals to 1 are test pellets
   ) %>% 
   mutate(pool = "Uncertainty+++") %>% 
-  select(
-    date, ID, pellets, pool, group, week
+  dplyr::select(
+    date, ID, pellets, pool, group, week, time, delay
   )
 
 # import raw data
@@ -249,18 +244,63 @@ summary(intake_mdl)
 #                           #
 
 delay_data <- intake_data %>% 
-  filter(group == "uncertainty", week > 1) %>% 
+  filter(week > 1) %>% 
   mutate(hour = lubridate::hour(time)) %>% 
   group_by(ID, hour) %>% 
-  slice(-1) %>% # remove first removal, corresponds to previous block
-  mutate(
+  dplyr::slice(-1) %>% # remove first removal, corresponds to previous block
+  dplyr::mutate(
     ret = (time - lag(time)) - delay
   ) %>% 
-  filter(ret > 0, ret < 3600, delay %in% c(15, 60, 120, 180, 240, 300)) %>%  # this are sensor probes without pellet actually being there, max ret is 1 hour by definition
+  filter(ret < 3600, delay %in% c(15, 60, 120, 180, 240, 300)) %>%  # this are sensor probes without pellet actually being there, max ret is 1 hour by definition
   mutate(ret = as.numeric(ret)) %>% 
   ungroup() %>% 
   group_by(ID) %>% 
   mutate(z_ret = scale(ret))
+
+negative_per_day <- delay_data %>% 
+  filter(ret<0) %>% 
+  group_by(ID, group, pool, date) %>% 
+  summarise(n = n())
+
+negative_per_day_cum <- negative_per_day %>% 
+  ungroup() %>% 
+  group_by(ID, group, pool) %>% 
+  mutate(
+    cum_neg = cumsum(n)
+  )
+
+# impulsivity framework to this analysis
+# correlation with other parameters
+# correlation matrix
+# piece-wise linear regresssion
+# log transformed linear regression
+
+neg_fit <- lmer(
+  data = negative_per_day_cum %>% mutate(t = as.numeric(as.factor(date))),
+  cum_neg ~ group * t + (1|ID)
+)
+summary(neg_fit)
+
+emmeans::emmeans(neg_fit, pairwise ~ group * t, type = "response")
+
+p1_day <- negative_per_day_cum %>% 
+  ggplot(aes(as.factor(date), cum_neg, group = ID, color = group)) +
+  geom_point() +
+  geom_line()
+
+negative <- delay_data %>% 
+  filter(ret<0) %>% 
+  group_by(ID, group, pool) %>% 
+  summarise(n = n())
+
+p1 <- negative %>% 
+  ggplot(aes(group, n, color = group)) +
+  stat_summary(aes(group=group, color = group), 
+               fun=mean, geom="point", shape = 3, size = 10) +
+  stat_summary(aes(group=group, width = 0.2),fun.data = mean_se,
+               geom = "errorbar", size = 1, width = 0.1) +
+  geom_point(shape = 0, size = 5) +
+  theme_pubclean()
 
 raw_ret <- delay_data %>% 
   ggplot(aes(as.factor(delay), ret)) +
