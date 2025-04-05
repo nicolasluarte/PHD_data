@@ -13,7 +13,42 @@ pacman::p_load(
     beezdemand
 )
 
-test_data <- readRDS("demand_curve.RDS")
+test_data <- readRDS("demand_curve.RDS") %>% 
+    mutate(
+        n_sesion = as.numeric(as.character(n_sesion))
+    )
+
+d <-
+    data_for_demand_curve(test_data, "sacarosa_crv", "events", c(1:100))
+d
+
+fits <-
+    parse_demand_curve_fit(d)
+fits
+
+retrieval_data %>% 
+    group_by(ID) %>% 
+    slice(1) %>% 
+    select(ID, group) %>% 
+    filter(group == "Uncertainty")
+
+stat_data <-
+    fits$parsed %>% 
+    mutate(
+        exp_group = if_else(ID %in% c(413,416,417,418,419,495,496,497,500), "uncertainty", "control") %>% 
+            as.factor(),
+        ID = as.factor(ID)
+    )
+
+mdl <-
+    lm(
+        data = stat_data,
+        log(Q0d) ~ exp_group
+    )
+
+mdl_emm <-
+    emmeans::emmeans(mdl, pairwise ~ exp_group, type = "response")
+mdl_emm
 
 # create time bins
 unique_time_bins <- test_data %>%

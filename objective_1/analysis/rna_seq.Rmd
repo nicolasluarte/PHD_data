@@ -1,0 +1,221 @@
+---
+title: "rna_seq"
+output: html_document
+date: "2023-07-31"
+---
+
+# Libraries
+
+```{r}
+#################################################################
+##                          Libraries                          ##
+#################################################################
+
+pacman::p_load(
+    tidyverse,
+    tidymodels,
+    ggplot2,
+    bannerCommenter,
+    edgeR,
+    doFuture,
+    finetune,
+    tictoc,
+    see,
+    ggpubr,
+    beepr,
+    themis,
+    annotables
+)
+```
+
+# Set current files path as the path
+
+```{r}
+##################################################################
+##                       Helper functions                       ##
+##################################################################
+
+# https://stackoverflow.com/questions/47044068/get-the-path-of-current-script
+# get path of source file
+getCurrentFileLocation <-  function()
+{
+    this_file <- commandArgs() %>% 
+        tibble::enframe(name = NULL) %>%
+        tidyr::separate(col=value, into=c("key", "value"), sep="=", fill='right') %>%
+        dplyr::filter(key == "--file") %>%
+        dplyr::pull(value)
+    if (length(this_file)==0)
+    {
+        this_file <- rstudioapi::getSourceEditorContext()$path
+    }
+    return(dirname(this_file))
+}
+
+# sets path on source file location
+script_path <- getCurrentFileLocation()
+setwd(script_path)
+
+```
+
+# Import data
+
+```{r}
+import <- list.files("~/data/rna-seq/", pattern = "*.tab", full.names = TRUE) %>% 
+    map_dfr(., function(x){
+        read_delim(x, col_names = c(
+            "ensembl_gene_id",
+            "val",
+            "val1",
+            "val2"
+        ), delim = "\t") %>% 
+            mutate(
+                ID = str_extract(x, "[0-9]"),
+                ensembl_gene_id = str_extract(ensembl_gene_id, "ENSMUSG[0-9]*")
+                ) %>% 
+            tail(-4) %>% 
+            select(-c("val1", "val2")) %>% 
+            group_by(ensembl_gene_id, ID) %>% 
+            summarise(
+                val_sum = sum(val)
+            )
+    }) %>% filter(ID != 6) # this sample does not cluster
+
+raw_data <- import %>% 
+    group_by(ensembl_gene_id) %>% 
+    mutate(s = sum(val_sum) == 0) %>% 
+    filter(s == FALSE) %>% 
+    select(-s) %>% 
+    ungroup() %>% 
+    pivot_wider(
+        names_from = ID,
+        values_from = val_sum
+    )
+```
+
+# Data normalization
+
+## Step 1:
+
+All gene isoform raw count are summed, so the gene represent total expression,
+including every isoform.
+
+## Step 2: 
+
+Normalize to count per million (library length), then set expression as log2 cpm
+
+## Step 3:
+
+Creates final data-set, with genes as rows and ID * group labels
+
+```{r}
+# step 1:
+raw_data_sum <- raw_data %>%
+    group_by(
+        ensembl_gene_id
+    ) %>%
+    summarise(
+        across(where(is.numeric), list(sum))
+    )
+# write back col names
+colnames(raw_data_sum) <- colnames(raw_data)
+# set data as matrix
+raw_data_sum_mat <- raw_data_sum %>%
+    select(-ensembl_gene_id) %>%
+    as.matrix()
+# set data into DGE matrix format
+rownames(raw_data_sum_mat) <- raw_data_sum$ensembl_gene_id
+
+
+# step 2:
+# create DGE object
+raw_data_sum_dge <- DGEList(raw_data_sum)
+norm_data_dge <- calcNormFactors(raw_data_sum_dge)
+# TMM + log2 transform DGE object
+cpm_log2_data <- cpm(
+    norm_data_dge,
+    log = TRUE
+    ) %>%
+    as_tibble() %>%
+    mutate(
+        ensembl_gene_id = raw_data_sum$ensembl_gene_id,
+        .before = `1`
+    )
+
+
+# Step 3:
+# sample info
+sample_info <- read_csv("~/scripts/r-scripts/info_sample.csv") %>%
+    rename(
+        ID = SampleName
+    ) %>%
+    mutate(
+        ID = as.character(ID)
+    )
+# full model data
+full_model_data <- cpm_log2_data %>%
+    pivot_longer(
+        cols = where(is.numeric),
+        names_to = "ID"
+    ) %>%
+    left_join(
+        ., sample_info, by = c('ID')
+    ) %>%
+    pivot_wider(
+        names_from = ensembl_gene_id,
+        values_from = value
+    ) %>% 
+    mutate(
+        ID = as.factor(ID),
+        group = as.factor(group),
+    )
+```
+
+# Select highly expressed genes
+
+```{r}
+
+highly_expressed_genes <- full_model_data %>% 
+    pivot_longer(
+        # all gene columns
+        cols = starts_with("ENS")
+    ) %>% 
+    inner_join(grcm38, by = c("name" = "ensgene")) %>% 
+    filter(!is.na(entrez), !grepl("predicted", description),
+           grepl("protein", biotype)) %>% 
+    filter(abs(value) > 3.6) %>% 
+    group_by(name) %>% 
+    summarise(n = n()) %>% 
+    filter(n > 3) %>%
+    pull(name)
+
+n_genes <- 
+    tibble(
+        before_filter = 
+    )
+    full_model_data %>% 
+    select(starts_with("ENS")) %>% 
+    {dim(.)[2]}
+
+
+full_model_data <- full_model_data %>% 
+    select(
+        ID, group, all_of(highly_expressed_genes)
+    )
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

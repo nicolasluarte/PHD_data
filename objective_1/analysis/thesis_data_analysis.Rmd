@@ -42,6 +42,12 @@ setwd(cur_dir)
 # lickometer data for both pool with low and high uncertainty
 lickometer_uncertainty <- readRDS("../data/raw/lickometer_data.rds")
 
+lickometer_uncertainty %>% 
+    group_by(ID) %>% 
+    summarise(
+        cnt = length(unique(fecha))
+    )
+
 # fed data for both pool with low and high uncertainty
 fed_high_uncertainty <- readRDS("../data/raw/high_uncertainty.rds")
 fed_low_uncertainty <- readRDS("../data/raw/low_uncertainty.rds")
@@ -54,6 +60,15 @@ fed_uncertainty <- bind_rows(
 
 # weight data
 weight_uncertainty <- readRDS("../data/raw/weights.rds")
+
+fed_uncertainty
+
+
+# get delays
+fed_uncertainty$delay %>% 
+    unique() %>% 
+    sort()
+
 ```
 
 # data processing
@@ -265,6 +280,25 @@ inter_pellet_recovery_group <- inter_pellet_recovery_ind %>%
 ## weight 
 ```{r}
 weight_uncertainty <- readRDS("../data/raw/weights.rds")
+
+write_csv(weight_uncertainty, file = "~/repos_sync/phd_objective_1/datasets/weights/objective_1_weights.csv")
+
+lickometer_uncertainty %>% 
+    group_by(ID) %>% 
+    summarise(
+        start_date = min(fecha),
+        end_date = max(fecha)
+    )
+
+# animals
+length(unique(weight_uncertainty$animal))
+# measurements
+weight_uncertainty %>% 
+    group_by(animal) %>% 
+    summarise(
+        cnt = n()
+    )
+
 # create control and experimental groups
 weight_uncertainty <- weight_uncertainty %>% 
   mutate(
@@ -528,6 +562,32 @@ pr_data <- lickometer_data %>%
     n_events = max(evento)
   )
 
+# by cost
+pr_cost <- lickometer_data %>% 
+    filter(tipo_recompensa == "sacarosa",
+           task_type == "pr",
+        ID %in% c(234, 235, 236, 243, 244, 245, 246, 263, 264, 265)) %>% 
+  group_by(
+    ID,
+    group,
+    protocol,
+    tipo_recompensa,
+    session,
+    task_type,
+    fecha,
+    experiment_id,
+    evento
+  ) %>% 
+    summarise(
+        n_licks = n()
+    )
+
+pr_cost %>% 
+    ggplot(aes(evento, n_licks)) +
+    geom_point() +
+    geom_smooth(method = "lm") +
+    facet_wrap(~protocol)
+
 pr_sessions <- pr_data %>% 
   filter(task_type == "pr") %>% 
   group_by(
@@ -607,6 +667,34 @@ licks_model <- lmer(
 )
 summary(licks_model)
 confint(licks_model)
+
+licks_model2 <- lme4::glmer.nb(
+    data = pr_sessions_mdl,
+    n_licks ~ group * session + (1 | ID)
+)
+summary(licks_model2)
+confint(licks_model2)
+
+# pool 1
+pool1_pr <- pr_sessions_mdl %>% 
+    filter(
+        ID %in% c(234, 235, 236, 243, 244, 245, 246, 263, 264, 265)
+    )
+licks_model3 <- lmerTest::lmer(
+    data = pool1_pr,
+    n_licks ~ group * session + (1 | ID)
+)
+summary(licks_model3)
+
+pool1_pr %>% 
+    ggplot(aes(session, n_licks, color = protocol)) +
+    stat_summary(
+        fun.data = "mean_se",
+        geom = "point",
+        size = 3,
+        aes(group = protocol)
+    ) 
+
 
 licks_model_fct <- lmer(
   data = pr_sessions_mdl,

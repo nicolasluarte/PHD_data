@@ -1,0 +1,178 @@
+---
+title: "Análisis Topográfico"
+author: "Magdalena Figueroa"
+date: "2024-03-19"
+output: html_document
+---
+
+Las neuronas de orexina se ubican en clusters, por lo que se espera que las neuronas de orexina estén cerca unas de otras. Por esto haremos un análisis del grafo de las neuronas de orexina mediante un análisis topográfico que permita determinar la distancia entre las particulas/selecciones que hizo el programa Imaris. Esperamos que las no neuronas aumenten la distancia del grafo, permitiendo ser un filtro para los datos obtenidos y seleccionar las neuronas de no neuronas.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Cargar librerías
+
+```{r}
+
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+library(ggpubr)
+library(parallel)
+library(doParallel)
+library(pbmcapply)
+library(stats)
+library(dplyr)
+library(tidyr)
+library(GGally)
+library(plotly)
+library(spaa)
+library(igraph)
+library(car)
+
+```
+
+# Cargar archivos
+
+```{r}
+# read data
+fileList <- list.files("./datasets_igual")
+ds <- pbmclapply(fileList, function(filename) {
+  print(paste("Loading", filename))
+  lookup <- c(class = "Area_class", class = "Set 1")
+  xl_data <- paste("./datasets_igual", filename, sep = "/") # This is necessary because the script is one folder above the data
+
+  # Load only position sheet  
+  ds <- read_xlsx(path = xl_data, sheet = "Position", skip = 1) %>% 
+    rename(any_of(lookup)) %>% # Rename area class or Set 1 to class
+    dplyr::select(-any_of(c("Unit", "Category", "Time", "Collection", "Channel", "Image"))) %>% 
+    mutate(filename = filename)
+  names(ds)[1:3] <- c("pos_x", "pos_y", "pos_z") # Change names so their easy to work with
+  return(ds) # return data frame
+  }, mc.cores = 3) %>% 
+  bind_rows() # join list by rows
+
+# Cargar archivo con info de neuronas
+neuroInfo <- read_excel("id_neuronas_por_imagen.xlsx", 
+                        skip = 1)
+
+# Crear dataset y seleccionar datos relevantes
+graph_data <- left_join(ds, 
+                      neuroInfo, 
+                      by = c("filename", "ID")) %>%
+            mutate(neuron_class = ifelse(is.na(neuron_class), "unknown", neuron_class))
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# Calcular distancia euclideana entre todos los puntos
+
+```{r}
+
+graph_data <-
+    read_csv("ran_for.csv")
+
+calculate_distances <- function(Mat) {
+    # Create edge list for neurons
+    edgeList <- dist(Mat, method = "euclidean", diag = FALSE, upper = FALSE) %>% 
+      dist2list(.) %>% 
+      filter(!(col == row)) %>%
+      #mutate(sum = (as.numeric(as.vector(col))^10 + as.numeric(as.vector(row))^10)) %>%
+      mutate(sum = (as.numeric(as.vector(col)) + as.numeric(as.vector(row)) + value)) %>%
+      group_by(sum) %>% 
+      slice(1) %>% 
+      ungroup() %>% 
+      select(!sum) %>% 
+      rename(from = "col", 
+             to = "row")
+    
+    # Create a non-directed full weighted graph
+    g1 <- graph_from_data_frame(edgeList, directed = FALSE)
+    E(g1)$weight <- edgeList$value
+    #return(mean_distance(g1))
+    distances(g1, algorithm = "dijkstra")
+}
+
+euc <- graph_data %>% 
+  group_by(filename) %>% 
+  group_split() %>% 
+  map_dfr(., function(X) {
+    # Calculate mean distance for a graph with all neurons considering their spatial position 
+    Neurons <- X %>% filter(neuron_class == "neuron")
+    NeuronMat <- as.matrix(Neurons[,1:3])
+    rownames(NeuronMat) <- Neurons$ID
+    NeuronMatDistance <- rowMeans(calculate_distances(NeuronMat))
+    
+    # Calculate mean distance for all neurons excluding one
+    nonNeurons <- X %>% filter(neuron_class != "neuron") %>% 
+      mutate(r = row_number()) %>% 
+      group_by(r) %>% 
+      group_split() %>% 
+      map_dfr(., function(Y) {
+        tictoc::tic()
+        dat <- rbind(Y %>% select(!r), 
+                   Neurons) # Combine data with of non neuron with neurons
+        # Create Matrix
+        M <- as.matrix(dat[,1:3])
+        rownames(M) <- dat$ID
+        MDist <- rowMeans(calculate_distances(M))
+        if (Y$r %% 100 == 0){
+        t <- tictoc::toc()
+        eta <- (round(t$toc - t$tic, 3) * (304017 - Y$r)) / 60
+        print(paste("Computing distance:", Y$r, "of:",
+                    304017, round(Y$r/304017, 3), "%",
+                    eta, sep = " "))
+        }
+
+        # return non-neuron data
+        data.frame(ID = Y$ID, 
+                   dist = MDist[names(MDist) == Y$ID])
+      })
+    
+    # Data
+    dat <- rbind(nonNeurons %>% mutate(class = "non_neurons"),
+                 data.frame(ID = names(NeuronMatDistance), 
+                     dist = NeuronMatDistance,
+                     class = "neurons")) %>% 
+      mutate(filename = unique(X$filename))
+    return(dat)
+  })
+
+write_csv()
+
+# Normalize dist in each file so we can put them all together in one plot
+
+euc1 <- euc %>%
+  group_by(filename) %>%
+  mutate(dist_norm = dist / mean(dist[class == "neurons"])) %>%
+  ungroup()
+
+
+p <- euc %>% 
+  ggplot(aes(x = class, y = dist)) +
+  facet_wrap(~ filename) +
+  geom_boxplot()
+p
+
+p1 <- euc1 %>% 
+  ggplot(aes(x = class, y = dist_norm)) +
+  geom_boxplot()
+p1
+
+```
+
+Description of what we did
+
+We took all the data obtained from Imaris for each file and the data obtain from the manual classification of neurons and non_neurons. We filtered the data so we could obtained the position of each object (independent of the classification) in the axis X, Y and Z, along with the ID, class (neuron, non_neuron, unknown) and filename (image). Then we calculated the mean of the euclidean distance between all neurons and created a graph (grafo) for each image. After that we calculated the mean euclidean distance of each non_neuron to all neurons of the same image. Finally we normalized the data based on the mean distance between neurons inside each image to make it possible to group all data independent of the image they came from. We obtained that the distance between neurons and non_neurons is diferent.
+
+# Analysis 
+
+```{r}
+
+anova <- aov(dist_norm ~ class, euc1)
+summary(anova)
+
+```
+
